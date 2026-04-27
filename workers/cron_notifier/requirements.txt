@@ -1,0 +1,15 @@
+# Core dependencies
+pydantic==2.5.0
+pydantic-settings==2.1.0
+
+# Scheduler
+apscheduler==3.10.4
+
+# Database
+asyncpg==0.29.0
+
+# HTTP client for Telegram API
+httpx==0.25.2
+
+# Utilities
+python-dotenv==1.0.0
