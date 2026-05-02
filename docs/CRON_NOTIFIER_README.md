@@ -11,18 +11,18 @@ The **cron_notifier** is a standalone background process that wakes up every 60 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────┐
-│         AsyncIOScheduler                │
-│    (runs every 60 seconds)              │
-└──────────────┬──────────────────────────┘
-               │
-               ▼
-┌─────────────────────────────────────────┐
-│      sweep_and_notify()                 │
-│  1. Query PostgreSQL for due tasks      │
-│  2. Send Telegram DM to each user       │
-│  3. Mark task as sent in database       │
-└─────────────────────────────────────────┘
+
+         AsyncIOScheduler                
+    (runs every 60 seconds)              
+
+               
+               
+
+      sweep_and_notify()                 
+  1. Query PostgreSQL for due tasks      
+  2. Send Telegram DM to each user       
+  3. Mark task as sent in database       
+
 ```
 
 ---
@@ -31,17 +31,17 @@ The **cron_notifier** is a standalone background process that wakes up every 60 
 
 ```
 workers/cron_notifier/
-├── core/
-│   ├── config.py          # Pydantic BaseSettings (DATABASE_URL, TELEGRAM_BOT_TOKEN)
-│   └── logger.py          # Simple logging.basicConfig()
-├── services/
-│   ├── database.py        # get_due_tasks() & mark_task_sent()
-│   └── telegram_client.py # send_telegram_dm()
-├── jobs/
-│   └── reminder_sweep.py  # Main sweep_and_notify() logic
-├── main.py                # Entry point with AsyncIOScheduler
-├── requirements.txt
-└── Dockerfile
+ core/
+    config.py          # Pydantic BaseSettings (DATABASE_URL, TELEGRAM_BOT_TOKEN)
+    logger.py          # Simple logging.basicConfig()
+ services/
+    database.py        # get_due_tasks() & mark_task_sent()
+    telegram_client.py # send_telegram_dm()
+ jobs/
+    reminder_sweep.py  # Main sweep_and_notify() logic
+ main.py                # Entry point with AsyncIOScheduler
+ requirements.txt
+ Dockerfile
 ```
 
 ---
@@ -89,11 +89,11 @@ POST https://api.telegram.org/bot<TOKEN>/sendMessage
 ## Message Format
 
 ```
-🔔 Reminder
+ Reminder
 
-📌 Buy groceries
-📝 Get milk, eggs, and bread from the store
-⏰ Deadline: 2026-04-28 15:00
+ Buy groceries
+ Get milk, eggs, and bread from the store
+ Deadline: 2026-04-28 15:00
 ```
 
 ---
@@ -132,15 +132,15 @@ docker run -e DATABASE_URL=... -e TELEGRAM_BOT_TOKEN=... cron_notifier
 ## Logging Output
 
 ```
-2026-04-28 14:00:00 - cron_notifier - INFO - 🚀 Starting cron_notifier...
-2026-04-28 14:00:00 - cron_notifier - INFO - ✓ Database pool initialized
-2026-04-28 14:00:00 - cron_notifier - INFO - ✓ Scheduler started (running every 60 seconds)
-2026-04-28 14:01:00 - cron_notifier - INFO - 🔄 Starting reminder sweep...
-2026-04-28 14:01:00 - cron_notifier - INFO - 📋 Found 3 due task(s)
-2026-04-28 14:01:00 - cron_notifier - INFO - 📤 Sending reminder for task 42 to user 123456
-2026-04-28 14:01:01 - cron_notifier - INFO - ✓ DM sent to user 123456
-2026-04-28 14:01:01 - cron_notifier - INFO - ✓ Task 42 marked as sent
-2026-04-28 14:01:01 - cron_notifier - INFO - ✓ Sweep complete. Processed 3 task(s)
+2026-04-28 14:00:00 - cron_notifier - INFO -  Starting cron_notifier...
+2026-04-28 14:00:00 - cron_notifier - INFO -  Database pool initialized
+2026-04-28 14:00:00 - cron_notifier - INFO -  Scheduler started (running every 60 seconds)
+2026-04-28 14:01:00 - cron_notifier - INFO -  Starting reminder sweep...
+2026-04-28 14:01:00 - cron_notifier - INFO -  Found 3 due task(s)
+2026-04-28 14:01:00 - cron_notifier - INFO -  Sending reminder for task 42 to user 123456
+2026-04-28 14:01:01 - cron_notifier - INFO -  DM sent to user 123456
+2026-04-28 14:01:01 - cron_notifier - INFO -  Task 42 marked as sent
+2026-04-28 14:01:01 - cron_notifier - INFO -  Sweep complete. Processed 3 task(s)
 ```
 
 ---

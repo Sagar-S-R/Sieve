@@ -2,45 +2,45 @@
 
 **Sieve** is an enterprise-grade, distributed AI system that autonomously monitors Telegram group chats, extracts tasks and deadlines using Google Gemini, and sends intelligent private reminders.
 
-## 🏗️ Architecture
+## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                        Telegram Bot                              │
-└────────────┬────────────────────────────────┬───────────────────┘
-             │                                │
-             ▼                                ▼
-    ┌────────────────┐              ┌────────────────┐
-    │  API Gateway   │              │  API Gateway   │
-    │  (FastAPI)     │              │  (FastAPI)     │
-    │  Zero-Cost     │              │  HITL          │
-    │  Triage        │              │  Intercept     │
-    └────────┬───────┘              └────────┬───────┘
-             │                                │
-             ▼                                ▼
-    ┌────────────────┐              ┌────────────────┐
-    │   RabbitMQ     │              │     Redis      │
-    │ fast_text_queue│              │  HITL Locks    │
-    │heavy_media_queue│             └────────────────┘
-    └────────┬───────┘
-             │
-             ├──────────────┬──────────────┐
-             ▼              ▼              ▼
-    ┌────────────┐  ┌────────────┐  ┌────────────┐
-    │   text_    │  │   media_   │  │   cron_    │
-    │ extractor  │  │ extractor  │  │ notifier   │
-    │ LangGraph  │  │ LangGraph  │  │ (60s loop) │
-    └─────┬──────┘  └─────┬──────┘  └─────┬──────┘
-          │               │               │
-          └───────────────┴───────────────┘
-                          ▼
-                 ┌────────────────┐
-                 │   PostgreSQL   │
-                 │   tasks table  │
-                 └────────────────┘
+
+                        Telegram Bot                              
+
+                                             
+                                             
+                  
+      API Gateway                   API Gateway   
+      (FastAPI)                     (FastAPI)     
+      Zero-Cost                     HITL          
+      Triage                        Intercept     
+                  
+                                             
+                                             
+                  
+       RabbitMQ                        Redis      
+     fast_text_queue                HITL Locks    
+    heavy_media_queue             
+    
+             
+             
+                                         
+        
+       text_         media_        cron_    
+     extractor     extractor     notifier   
+     LangGraph     LangGraph     (60s loop) 
+        
+                                        
+          
+                          
+                 
+                    PostgreSQL   
+                    tasks table  
+                 
 ```
 
-## 🚀 Features
+## Features
 
 ### 1. **Zero-Cost Triage**
 - API Gateway filters messages by keywords before sending to LLM
@@ -67,57 +67,57 @@
 - Sends DMs when deadlines arrive
 - Marks tasks as sent to avoid duplicates
 
-## 📁 Project Structure
+## Project Structure
 
 ```
 Sieve/
-├── api_gateway/              # FastAPI webhook receiver
-│   ├── core/
-│   │   └── config.py
-│   ├── routers/
-│   │   └── webhook.py       # Main routing logic
-│   ├── services/
-│   │   ├── redis_client.py  # HITL lock management
-│   │   ├── database.py      # Task persistence
-│   │   ├── rabbitmq.py      # Queue publishing
-│   │   └── telegram.py      # DM sending
-│   ├── main.py
-│   ├── requirements.txt
-│   └── Dockerfile
-│
-├── workers/
-│   ├── text_extractor/      # Text message processor
-│   │   ├── core/
-│   │   ├── graph/           # LangGraph workflow
-│   │   ├── nodes/           # Workflow nodes
-│   │   ├── services/
-│   │   └── main.py
-│   │
-│   ├── media_extractor/     # Image/PDF processor
-│   │   ├── core/
-│   │   ├── graph/           # LangGraph workflow
-│   │   ├── nodes/           # Workflow nodes
-│   │   ├── services/
-│   │   └── main.py
-│   │
-│   └── cron_notifier/       # Reminder sender
-│       ├── core/
-│       ├── services/
-│       ├── jobs/
-│       └── main.py
-│
-├── shared/
-│   └── schemas.py           # Pydantic models
-│
-├── database/
-│   └── init.sql             # PostgreSQL schema
-│
-├── docker-compose.yml       # Full stack orchestration
-├── .env.example
-└── README.md
+ api_gateway/              # FastAPI webhook receiver
+    core/
+       config.py
+    routers/
+       webhook.py       # Main routing logic
+    services/
+       redis_client.py  # HITL lock management
+       database.py      # Task persistence
+       rabbitmq.py      # Queue publishing
+       telegram.py      # DM sending
+    main.py
+    requirements.txt
+    Dockerfile
+
+ workers/
+    text_extractor/      # Text message processor
+       core/
+       graph/           # LangGraph workflow
+       nodes/           # Workflow nodes
+       services/
+       main.py
+   
+    media_extractor/     # Image/PDF processor
+       core/
+       graph/           # LangGraph workflow
+       nodes/           # Workflow nodes
+       services/
+       main.py
+   
+    cron_notifier/       # Reminder sender
+        core/
+        services/
+        jobs/
+        main.py
+
+ shared/
+    schemas.py           # Pydantic models
+
+ database/
+    init.sql             # PostgreSQL schema
+
+ docker-compose.yml       # Full stack orchestration
+ .env.example
+ README.md
 ```
 
-## 🛠️ Tech Stack
+## Tech Stack
 
 | Component | Technology |
 |-----------|------------|
@@ -130,7 +130,7 @@ Sieve/
 | **Scheduler** | APScheduler |
 | **HTTP Client** | httpx |
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
 - Docker & Docker Compose
@@ -176,7 +176,7 @@ curl -X POST "https://api.telegram.org/bot<YOUR_TOKEN>/setWebhook" \
 3. Check logs: `docker-compose logs -f text_extractor`
 4. Verify task in database: `docker exec -it sieve_postgres psql -U user -d sieve -c "SELECT * FROM tasks;"`
 
-## 📊 Monitoring
+## Monitoring
 
 ### Health Checks
 ```bash
@@ -211,7 +211,7 @@ SELECT * FROM tasks ORDER BY created_at DESC LIMIT 10;
 SELECT * FROM tasks WHERE deadline <= NOW() AND is_sent = FALSE;
 ```
 
-## 🔄 Message Flow Examples
+## Message Flow Examples
 
 ### Example 1: Text Message with Deadline
 ```
@@ -251,10 +251,10 @@ User replies in DM: "Tomorrow 6pm"
 ↓
 API Gateway: HITL lock found → Merge answer → Save task
 ↓
-Telegram DM: "✅ Task saved!"
+Telegram DM: "Task saved!"
 ```
 
-## 🧪 Testing
+## Testing
 
 ### Manual Testing
 ```bash
@@ -279,7 +279,7 @@ INSERT INTO tasks (user_id, group_id, title, action_required, deadline, is_sent)
 VALUES (123456, 789, 'Test Task', 'Complete testing', NOW() + INTERVAL '1 minute', FALSE);
 ```
 
-## 📈 Performance
+## Performance
 
 | Metric | Value |
 |--------|-------|
@@ -289,16 +289,16 @@ VALUES (123456, 789, 'Test Task', 'Complete testing', NOW() + INTERVAL '1 minute
 | Concurrent workers | Unlimited (horizontal scaling) |
 | Database connections | 10 per service |
 
-## 🔒 Security
+## Security
 
-- ✅ Environment variables for secrets
-- ✅ No hardcoded credentials
-- ✅ Telegram webhook validation (TODO)
-- ✅ Rate limiting (TODO)
-- ✅ Input sanitization
-- ✅ SQL injection prevention (parameterized queries)
+- Environment variables for secrets
+- No hardcoded credentials
+- Telegram webhook validation (TODO)
+- Rate limiting (TODO)
+- Input sanitization
+- SQL injection prevention (parameterized queries)
 
-## 🐛 Troubleshooting
+## Troubleshooting
 
 ### Workers not processing messages
 ```bash
@@ -328,7 +328,7 @@ docker exec -it sieve_postgres psql -U user -d sieve -c \
   "SELECT * FROM tasks WHERE deadline <= NOW() AND is_sent = FALSE;"
 ```
 
-## 📝 TODO
+## TODO
 
 - [ ] Add Telegram webhook signature validation
 - [ ] Add rate limiting to API Gateway
@@ -341,13 +341,13 @@ docker exec -it sieve_postgres psql -U user -d sieve -c \
 - [ ] Add recurring tasks
 - [ ] Add task categories/tags
 
-## 📄 License
+## License
 
 MIT
 
-## 👥 Contributors
+## Contributors
 
-Built with ❤️ by the Sieve team
+Built with care by the Sieve team
 
 ---
 

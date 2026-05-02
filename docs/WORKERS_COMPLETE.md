@@ -1,140 +1,140 @@
-# Sieve Workers - Complete Implementation ✅
+# Sieve Workers - Complete Implementation 
 
 All three microservices are now fully implemented with **lean, pragmatic code**.
 
 ---
 
-## 📊 Overview
+##  Overview
 
 | Worker | Purpose | Tech | Lines of Code | Status |
 |--------|---------|------|---------------|--------|
-| **text_extractor** | Process text messages with LangGraph + Gemini | LangGraph, Gemini 2.5 Flash | ~400 | ✅ Complete |
-| **media_extractor** | Process images/PDFs with Vision/OCR | LangGraph, Gemini 2.0 Flash, PyMuPDF | ~350 | ✅ Complete |
-| **cron_notifier** | Send reminder DMs every 60 seconds | APScheduler, asyncpg, httpx | ~200 | ✅ Complete |
+| **text_extractor** | Process text messages with LangGraph + Gemini | LangGraph, Gemini 2.5 Flash | ~400 |  Complete |
+| **media_extractor** | Process images/PDFs with Vision/OCR | LangGraph, Gemini 2.0 Flash, PyMuPDF | ~350 |  Complete |
+| **cron_notifier** | Send reminder DMs every 60 seconds | APScheduler, asyncpg, httpx | ~200 |  Complete |
 
 **Total:** ~950 lines of functional, production-ready code.
 
 ---
 
-## 🏗️ Architecture
+##  Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                        Telegram Bot                              │
-└────────────┬────────────────────────────────┬───────────────────┘
-             │                                │
-             ▼                                ▼
-    ┌────────────────┐              ┌────────────────┐
-    │  API Gateway   │              │  API Gateway   │
-    │  (text msgs)   │              │  (media files) │
-    └────────┬───────┘              └────────┬───────┘
-             │                                │
-             ▼                                ▼
-    ┌────────────────┐              ┌────────────────┐
-    │   RabbitMQ     │              │   RabbitMQ     │
-    │ fast_text_queue│              │heavy_media_queue│
-    └────────┬───────┘              └────────┬───────┘
-             │                                │
-             ▼                                ▼
-    ┌────────────────┐              ┌────────────────┐
-    │text_extractor  │              │media_extractor │
-    │  LangGraph     │              │  LangGraph     │
-    │  Gemini 2.5    │              │  Gemini 2.0    │
-    └────────┬───────┘              └────────┬───────┘
-             │                                │
-             └────────────┬───────────────────┘
-                          ▼
-                 ┌────────────────┐
-                 │   PostgreSQL   │
-                 │   tasks table  │
-                 └────────┬───────┘
-                          │
-                          ▼
-                 ┌────────────────┐
-                 │ cron_notifier  │
-                 │  (every 60s)   │
-                 └────────┬───────┘
-                          │
-                          ▼
-                 ┌────────────────┐
-                 │  Telegram DM   │
-                 │   (reminders)  │
-                 └────────────────┘
+
+                        Telegram Bot                              
+
+                                             
+                                             
+                  
+      API Gateway                   API Gateway   
+      (text msgs)                   (media files) 
+                  
+                                             
+                                             
+                  
+       RabbitMQ                      RabbitMQ     
+     fast_text_queue              heavy_media_queue
+                  
+                                             
+                                             
+                  
+    text_extractor                media_extractor 
+      LangGraph                     LangGraph     
+      Gemini 2.5                    Gemini 2.0    
+                  
+                                             
+             
+                          
+                 
+                    PostgreSQL   
+                    tasks table  
+                 
+                          
+                          
+                 
+                  cron_notifier  
+                   (every 60s)   
+                 
+                          
+                          
+                 
+                   Telegram DM   
+                    (reminders)  
+                 
 ```
 
 ---
 
-## 📁 Directory Structure
+##  Directory Structure
 
 ```
 Sieve/
-├── shared/
-│   └── schemas.py                    # EventExtraction Pydantic model
-├── database/
-│   └── init.sql                      # PostgreSQL schema with is_sent column
-├── workers/
-│   ├── text_extractor/
-│   │   ├── core/
-│   │   │   ├── config.py            # Simple BaseSettings
-│   │   │   ├── llm.py               # Gemini 2.5 Flash
-│   │   │   └── logger.py            # Basic logging
-│   │   ├── graph/
-│   │   │   ├── state.py             # AgentState TypedDict
-│   │   │   └── workflow.py          # LangGraph workflow
-│   │   ├── nodes/
-│   │   │   ├── intent_node.py       # Classify intent
-│   │   │   ├── context_node.py      # Fetch recent tasks
-│   │   │   ├── extractor_node.py    # Extract with LLM
-│   │   │   ├── critic_node.py       # Validate extraction
-│   │   │   └── hitl_node.py         # HITL flow
-│   │   ├── services/
-│   │   │   ├── database.py          # Mock DB functions
-│   │   │   └── redis_client.py      # HITL locks
-│   │   ├── main.py                  # RabbitMQ consumer
-│   │   ├── requirements.txt
-│   │   └── Dockerfile
-│   │
-│   ├── media_extractor/
-│   │   ├── core/
-│   │   │   ├── config.py            # Simple BaseSettings
-│   │   │   └── vision_llm.py        # Gemini 2.0 Flash
-│   │   ├── graph/
-│   │   │   ├── state.py             # AgentState TypedDict
-│   │   │   └── workflow.py          # LangGraph workflow
-│   │   ├── nodes/
-│   │   │   ├── classifier_node.py   # Check file extension
-│   │   │   ├── vision_node.py       # Process images
-│   │   │   ├── ocr_chunk_node.py    # Extract PDF text
-│   │   │   ├── critic_node.py       # Validate extraction
-│   │   │   └── hitl_node.py         # HITL flow
-│   │   ├── services/
-│   │   │   ├── file_handler.py      # Download Telegram files
-│   │   │   ├── database.py          # Mock DB functions
-│   │   │   └── redis_client.py      # HITL locks
-│   │   ├── main.py                  # RabbitMQ consumer
-│   │   ├── requirements.txt
-│   │   └── Dockerfile
-│   │
-│   └── cron_notifier/
-│       ├── core/
-│       │   ├── config.py            # Simple BaseSettings
-│       │   └── logger.py            # Basic logging
-│       ├── services/
-│       │   ├── database.py          # get_due_tasks, mark_task_sent
-│       │   └── telegram_client.py   # send_telegram_dm
-│       ├── jobs/
-│       │   └── reminder_sweep.py    # Main sweep logic
-│       ├── main.py                  # AsyncIOScheduler entry point
-│       ├── requirements.txt
-│       └── Dockerfile
-│
-├── docker-compose.yml               # TODO: Add all services
-└── README.md
+ shared/
+    schemas.py                    # EventExtraction Pydantic model
+ database/
+    init.sql                      # PostgreSQL schema with is_sent column
+ workers/
+    text_extractor/
+       core/
+          config.py            # Simple BaseSettings
+          llm.py               # Gemini 2.5 Flash
+          logger.py            # Basic logging
+       graph/
+          state.py             # AgentState TypedDict
+          workflow.py          # LangGraph workflow
+       nodes/
+          intent_node.py       # Classify intent
+          context_node.py      # Fetch recent tasks
+          extractor_node.py    # Extract with LLM
+          critic_node.py       # Validate extraction
+          hitl_node.py         # HITL flow
+       services/
+          database.py          # Mock DB functions
+          redis_client.py      # HITL locks
+       main.py                  # RabbitMQ consumer
+       requirements.txt
+       Dockerfile
+   
+    media_extractor/
+       core/
+          config.py            # Simple BaseSettings
+          vision_llm.py        # Gemini 2.0 Flash
+       graph/
+          state.py             # AgentState TypedDict
+          workflow.py          # LangGraph workflow
+       nodes/
+          classifier_node.py   # Check file extension
+          vision_node.py       # Process images
+          ocr_chunk_node.py    # Extract PDF text
+          critic_node.py       # Validate extraction
+          hitl_node.py         # HITL flow
+       services/
+          file_handler.py      # Download Telegram files
+          database.py          # Mock DB functions
+          redis_client.py      # HITL locks
+       main.py                  # RabbitMQ consumer
+       requirements.txt
+       Dockerfile
+   
+    cron_notifier/
+        core/
+           config.py            # Simple BaseSettings
+           logger.py            # Basic logging
+        services/
+           database.py          # get_due_tasks, mark_task_sent
+           telegram_client.py   # send_telegram_dm
+        jobs/
+           reminder_sweep.py    # Main sweep logic
+        main.py                  # AsyncIOScheduler entry point
+        requirements.txt
+        Dockerfile
+
+ docker-compose.yml               # TODO: Add all services
+ README.md
 ```
 
 ---
 
-## 🔄 Data Flow
+##  Data Flow
 
 ### 1. Text Message Flow
 ```
@@ -164,7 +164,7 @@ Worker detects missing info → Save state to Redis → (TODO: Send DM)
 
 ---
 
-## 🚀 Running All Workers
+##  Running All Workers
 
 ### Docker Compose (Recommended)
 ```yaml
@@ -242,7 +242,7 @@ docker-compose up -d
 
 ---
 
-## 🧪 Testing
+##  Testing
 
 ### 1. Test text_extractor
 ```bash
@@ -287,7 +287,7 @@ SELECT * FROM tasks WHERE id = <task_id>;
 
 ---
 
-## 📝 TODO Items
+##  TODO Items
 
 ### High Priority
 - [ ] Implement real database functions (replace mocks with asyncpg)
@@ -309,25 +309,25 @@ SELECT * FROM tasks WHERE id = <task_id>;
 
 ---
 
-## 🎯 Code Quality Metrics
+##  Code Quality Metrics
 
 | Metric | Target | Actual | Status |
 |--------|--------|--------|--------|
-| Lines per file | < 100 | ~50 | ✅ |
-| Cyclomatic complexity | < 10 | ~3 | ✅ |
-| Function length | < 50 lines | ~20 | ✅ |
-| Abstraction layers | < 3 | 2 | ✅ |
-| Dependencies | Minimal | 5-7 per worker | ✅ |
+| Lines per file | < 100 | ~50 |  |
+| Cyclomatic complexity | < 10 | ~3 |  |
+| Function length | < 50 lines | ~20 |  |
+| Abstraction layers | < 3 | 2 |  |
+| Dependencies | Minimal | 5-7 per worker |  |
 
 **Philosophy:** Simple, direct, functional code. No over-engineering.
 
 ---
 
-## 🏆 Summary
+##  Summary
 
-✅ **text_extractor** - Lean LangGraph workflow for text messages  
-✅ **media_extractor** - Lean LangGraph workflow for images/PDFs  
-✅ **cron_notifier** - Simple async heartbeat worker  
+ **text_extractor** - Lean LangGraph workflow for text messages  
+ **media_extractor** - Lean LangGraph workflow for images/PDFs  
+ **cron_notifier** - Simple async heartbeat worker  
 
 **Total implementation time:** ~2 hours  
 **Total lines of code:** ~950  
@@ -339,4 +339,4 @@ All workers follow the **Staff Python Backend Architect** directive:
 - No bloated error handling
 - Simplest possible code to achieve functionality
 
-**Ready for deployment!** 🚀
+**Ready for deployment!** 

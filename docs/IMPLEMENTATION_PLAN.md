@@ -1,33 +1,33 @@
-# 🎯 Sieve - Implementation Plan & Next Steps
+# Sieve - Implementation Plan & Next Steps
 
-## ✅ What's Already Complete
+## What's Already Complete
 
 ### Core Infrastructure (100% Done)
-- ✅ PostgreSQL schema with tasks table
-- ✅ Redis for HITL state management
-- ✅ RabbitMQ with fast_text_queue and heavy_media_queue
-- ✅ Docker Compose orchestration
-- ✅ Environment configuration
+- PostgreSQL schema with tasks table
+- Redis for HITL state management
+- RabbitMQ with fast_text_queue and heavy_media_queue
+- Docker Compose orchestration
+- Environment configuration
 
 ### Microservices (100% Done)
-- ✅ **api_gateway** - FastAPI webhook receiver with routing logic
-- ✅ **text_extractor** - LangGraph workflow for text messages
-- ✅ **media_extractor** - LangGraph workflow for images/PDFs
-- ✅ **cron_notifier** - APScheduler for reminder DMs
+- **api_gateway** - FastAPI webhook receiver with routing logic
+- **text_extractor** - LangGraph workflow for text messages
+- **media_extractor** - LangGraph workflow for images/PDFs
+- **cron_notifier** - APScheduler for reminder DMs
 
 ### Documentation (100% Done)
-- ✅ README.md with full setup instructions
-- ✅ docker-compose.yml with all services
-- ✅ .env.example template
-- ✅ .gitignore
+- README.md with full setup instructions
+- docker-compose.yml with all services
+- .env.example template
+- .gitignore
 
 ---
 
-## 🚧 What Needs Implementation
+## What Needs Implementation
 
 ### Priority 1: Critical for MVP (Must Have)
 
-#### 1.1 Database Connection Initialization ⚠️ CRITICAL
+#### 1.1 Database Connection Initialization - CRITICAL
 **Status:** Mock functions exist, need real implementation
 
 **Files to Update:**
@@ -53,7 +53,7 @@ asyncio.run(init_db())
 
 ---
 
-#### 1.2 Telegram DM Sending in HITL Nodes ⚠️ CRITICAL
+#### 1.2 Telegram DM Sending in HITL Nodes - CRITICAL
 **Status:** TODO comments exist, need implementation
 
 **Files to Update:**
@@ -276,15 +276,15 @@ CREATE TABLE user_preferences (
 
 ---
 
-## 📋 Recommended Implementation Order
+## Recommended Implementation Order
 
 ### Week 1: MVP (Minimum Viable Product)
 ```
 Day 1-2: Critical Fixes
-✅ 1.1 Database connection initialization
-✅ 1.2 Telegram DM sending in HITL
-✅ 1.3 Telegram client service
-✅ 1.4 Fix async context node
+[DONE] 1.1 Database connection initialization
+[DONE] 1.2 Telegram DM sending in HITL
+[DONE] 1.3 Telegram client service
+[DONE] 1.4 Fix async context node
 
 Day 3-4: Testing & Debugging
 - Test full text message flow
@@ -294,7 +294,7 @@ Day 3-4: Testing & Debugging
 - Fix any bugs
 
 Day 5: Security & Deployment
-✅ 1.5 Webhook signature validation
+[DONE] 1.5 Webhook signature validation
 - Deploy to production server
 - Set up Telegram webhook
 - Monitor logs
@@ -305,17 +305,17 @@ Weekend: Buffer for issues
 ### Week 2: Production Hardening
 ```
 Day 1-2: Error Handling
-✅ 2.1 Retry logic
-✅ 2.1 Dead letter queues
-✅ 2.1 Circuit breakers
+[DONE] 2.1 Retry logic
+[DONE] 2.1 Dead letter queues
+[DONE] 2.1 Circuit breakers
 
 Day 3-4: Monitoring
-✅ 2.3 Prometheus metrics
-✅ 2.4 Health checks
-✅ 2.2 Log aggregation
+[DONE] 2.3 Prometheus metrics
+[DONE] 2.4 Health checks
+[DONE] 2.2 Log aggregation
 
 Day 5: Performance
-✅ 2.5 Rate limiting
+[DONE] 2.5 Rate limiting
 - Load testing
 - Optimization
 
@@ -332,7 +332,7 @@ Weekend: Documentation updates
 
 ---
 
-## 🔧 Quick Fixes Needed Right Now
+## Quick Fixes Needed Right Now
 
 ### Fix 1: Add TELEGRAM_BOT_TOKEN to worker configs
 ```python
@@ -342,7 +342,7 @@ class Settings(BaseSettings):
     RABBITMQ_URL: str
     REDIS_URL: str
     DATABASE_URL: str
-    TELEGRAM_BOT_TOKEN: str  # ← Add this
+    TELEGRAM_BOT_TOKEN: str  # <- Add this
 ```
 
 ### Fix 2: Create telegram_client.py for workers
@@ -360,7 +360,7 @@ httpx==0.25.2
 
 ---
 
-## 🚀 Deployment Checklist
+## Deployment Checklist
 
 ### Before First Deploy
 - [ ] Set up production server (AWS/GCP/DigitalOcean)
@@ -404,21 +404,21 @@ curl -X POST "https://api.telegram.org/bot<TOKEN>/setWebhook" \
 
 ---
 
-## 📊 Current System Status
+## Current System Status
 
 | Component | Status | Priority | Effort |
 |-----------|--------|----------|--------|
-| Database init | ⚠️ Mock | P1 | 2h |
-| HITL DM sending | ⚠️ TODO | P1 | 1h |
-| Telegram client | ⚠️ Missing | P1 | 30m |
-| Async context node | ⚠️ Bug | P1 | 30m |
-| Webhook validation | ❌ Missing | P1 | 1h |
-| Error handling | ⚠️ Basic | P2 | 4h |
-| Metrics | ❌ Missing | P2 | 4h |
-| Health checks | ⚠️ Basic | P2 | 2h |
-| Rate limiting | ❌ Missing | P2 | 2h |
-| Testing | ❌ Missing | P3 | 8h |
-| Admin dashboard | ❌ Missing | P3 | 16h |
+| Database init | Mock | P1 | 2h |
+| HITL DM sending | TODO | P1 | 1h |
+| Telegram client | Missing | P1 | 30m |
+| Async context node | Bug | P1 | 30m |
+| Webhook validation | Missing | P1 | 1h |
+| Error handling | Basic | P2 | 4h |
+| Metrics | Missing | P2 | 4h |
+| Health checks | Basic | P2 | 2h |
+| Rate limiting | Missing | P2 | 2h |
+| Testing | Missing | P3 | 8h |
+| Admin dashboard | Missing | P3 | 16h |
 
 **Total P1 effort:** ~5 hours  
 **Total P2 effort:** ~12 hours  
@@ -426,19 +426,19 @@ curl -X POST "https://api.telegram.org/bot<TOKEN>/setWebhook" \
 
 ---
 
-## 🎯 Recommended Next Steps
+## Recommended Next Steps
 
 ### Immediate (Today)
-1. ✅ Fix database initialization
-2. ✅ Add Telegram client to workers
-3. ✅ Implement HITL DM sending
-4. ✅ Fix async context node
-5. ✅ Test full flow end-to-end
+1. [DONE] Fix database initialization
+2. [DONE] Add Telegram client to workers
+3. [DONE] Implement HITL DM sending
+4. [DONE] Fix async context node
+5. [DONE] Test full flow end-to-end
 
 ### This Week
-1. ✅ Add webhook signature validation
-2. ✅ Improve error handling
-3. ✅ Add basic metrics
+1. [DONE] Add webhook signature validation
+2. [DONE] Improve error handling
+3. [DONE] Add basic metrics
 4. Deploy to staging environment
 5. Load testing
 
@@ -451,7 +451,7 @@ curl -X POST "https://api.telegram.org/bot<TOKEN>/setWebhook" \
 
 ---
 
-## 💡 Pro Tips
+## Pro Tips
 
 ### Development
 - Use `docker-compose logs -f <service>` to debug
@@ -475,7 +475,7 @@ curl -X POST "https://api.telegram.org/bot<TOKEN>/setWebhook" \
 
 ---
 
-## 📞 Support & Resources
+## Support & Resources
 
 ### Documentation
 - FastAPI: https://fastapi.tiangolo.com/
@@ -495,7 +495,7 @@ curl -X POST "https://api.telegram.org/bot<TOKEN>/setWebhook" \
 
 ---
 
-## ✅ Summary
+## Summary
 
 **Current Status:** 90% complete, MVP ready with minor fixes
 
@@ -507,4 +507,4 @@ curl -X POST "https://api.telegram.org/bot<TOKEN>/setWebhook" \
 
 **Total time to production:** ~6 hours of focused work
 
-**System is production-ready after P1 fixes!** 🚀
+**System is production-ready after P1 fixes!**
