@@ -1,6 +1,8 @@
 from workers.text_extractor.graph.state import AgentState
 from workers.text_extractor.services.redis_client import set_hitl_lock
+from workers.text_extractor.services.telegram_client import send_dm
 from workers.text_extractor.core.logger import logger
+import asyncio
 
 
 def require_human_in_loop(state: AgentState) -> AgentState:
@@ -33,11 +35,18 @@ def require_human_in_loop(state: AgentState) -> AgentState:
             "user_id": user_id
         })
         
-        # TODO: Send Telegram DM to user with hitl_prompt
-        logger.info("HITL DM sending (TODO)", extra={
-            "node": "hitl_node",
-            "user_id": user_id,
-            "action": "send_telegram_dm"
-        })
+        # Send Telegram DM to user
+        try:
+            asyncio.run(send_dm(user_id, state["hitl_prompt"]))
+            logger.info("HITL DM sent successfully", extra={
+                "node": "hitl_node",
+                "user_id": user_id
+            })
+        except Exception as e:
+            logger.error(f"Failed to send HITL DM: {e}", extra={
+                "node": "hitl_node",
+                "user_id": user_id,
+                "error": str(e)
+            })
     
     return state

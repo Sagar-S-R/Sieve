@@ -6,11 +6,29 @@ from api_gateway.services.telegram import send_telegram_dm
 
 router = APIRouter()
 
-# Zero-cost triage keywords
+# Zero-cost triage keywords - expanded to catch more reminder-like messages
 TRIAGE_KEYWORDS = [
-    "due", "deadline", "assignment", "homework", "test", "exam",
-    "hackathon", "submit", "submission", "paper", "project",
-    "meeting", "presentation", "reminder", "task"
+    # Deadlines & Time
+    "due", "deadline", "by", "before", "until", "tomorrow", "today", "tonight",
+    "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+    "next week", "this week", "later", "soon",
+    
+    # Academic/Work
+    "assignment", "homework", "test", "exam", "quiz", "midterm", "final",
+    "hackathon", "submit", "submission", "paper", "project", "report",
+    "presentation", "lecture", "class", "lab",
+    
+    # Events & Meetings
+    "meeting", "meet", "call", "conference", "event", "appointment",
+    "session", "interview", "discussion", "standup", "sync",
+    
+    # Actions
+    "remind", "reminder", "remember", "don't forget", "dont forget",
+    "need to", "have to", "must", "should", "gotta", "got to",
+    "attend", "join", "participate", "complete", "finish", "do",
+    
+    # Tasks
+    "task", "todo", "to-do", "to do", "work on", "follow up", "followup"
 ]
 
 
@@ -42,9 +60,69 @@ async def telegram_webhook(request: Request):
         document = message.get("document")
         
         # ============================================
-        # PRIVATE DM - HITL INTERCEPT
+        # PRIVATE DM - ONBOARDING & HITL
         # ============================================
         if chat_type == "private":
+            # Handle /start command
+            if text and text.startswith("/start"):
+                welcome_message = (
+                    "👋 <b>Welcome to Sieve!</b>\n\n"
+                    "I'm your smart reminder assistant. I can help you:\n"
+                    "• Extract reminders from conversations\n"
+                    "• Set deadlines automatically\n"
+                    "• Send you notifications when tasks are due\n\n"
+                    "🚀 <b>Get Started:</b>\n"
+                    "1. Add me to your group\n"
+                    "2. Just chat naturally and mention tasks\n"
+                    "3. I'll extract and remind you automatically!\n\n"
+                    "💡 <b>Example:</b>\n"
+                    "\"Remind me to submit assignment tomorrow at 5pm\"\n\n"
+                    "Ready to add me to a group? Click the button below!"
+                )
+                
+                # Get bot username for the link
+                bot_username = "sieve7_bot"  # Your bot username
+                
+                # Create inline keyboard with "Add to Group" button
+                # Note: Using startgroup without admin parameter - bot works as regular member
+                inline_keyboard = {
+                    "inline_keyboard": [
+                        [
+                            {
+                                "text": "➕ Add to Group",
+                                "url": f"https://t.me/{bot_username}?startgroup=start"
+                            }
+                        ],
+                        [
+                            {
+                                "text": "📖 Help",
+                                "callback_data": "help"
+                            }
+                        ]
+                    ]
+                }
+                
+                await send_telegram_dm(user_id, welcome_message, reply_markup=inline_keyboard)
+                return {"status": "ok"}
+            
+            # Handle /help command
+            if text and text.startswith("/help"):
+                help_message = (
+                    "📖 <b>How to use Sieve:</b>\n\n"
+                    "<b>In Groups:</b>\n"
+                    "Just chat naturally! I'll detect reminders like:\n"
+                    "• \"Remind me to call John at 3pm\"\n"
+                    "• \"Don't forget the meeting tomorrow\"\n"
+                    "• \"Submit assignment by Friday\"\n\n"
+                    "<b>Commands:</b>\n"
+                    "/start - Show welcome message\n"
+                    "/help - Show this help message\n\n"
+                    "Need more help? Contact @YourSupportUsername"
+                )
+                
+                await send_telegram_dm(user_id, help_message)
+                return {"status": "ok"}
+            
             # Check for HITL lock
             hitl_lock = await get_hitl_lock(user_id)
             
@@ -52,41 +130,17 @@ async def telegram_webhook(request: Request):
                 # User is responding to clarification request
                 print(f"[HITL] User {user_id} responding to clarification")
                 
-                # Extract saved data from lock
-                extracted_data = hitl_lock.get("extracted_data", {})
-                
-                # Merge user's answer with saved data
-                # The user's text is the clarification (e.g., deadline)
-                task_data = {
-                    "user_id": hitl_lock.get("user_id", user_id),
+                # Send the user's response back to text_extractor for processing
+                # The worker will merge the clarification with saved state
+                payload = {
+                    "user_id": user_id,
                     "group_id": hitl_lock.get("group_id"),
-                    "title": extracted_data.get("title", "Task"),
-                    "action_required": extracted_data.get("action_required", ""),
-                    "deadline": text  # User's reply is the missing deadline
+                    "message_text": text,
+                    "is_hitl_response": True  # Flag to indicate this is a HITL response
                 }
                 
-                # Save to database
-                try:
-                    task_id = await save_completed_task(task_data)
-                    print(f"[HITL] Task {task_id} saved after clarification")
-                    
-                    # Delete HITL lock
-                    await delete_hitl_lock(user_id)
-                    
-                    # Send confirmation DM
-                    await send_telegram_dm(
-                        user_id,
-                        f"✅ <b>Task saved!</b>\n\n"
-                        f"📌 {task_data['title']}\n"
-                        f"⏰ Deadline: {text}"
-                    )
-                    
-                except Exception as e:
-                    print(f"[HITL] Error saving task: {e}")
-                    await send_telegram_dm(
-                        user_id,
-                        "❌ Sorry, there was an error saving your task. Please try again."
-                    )
+                print(f"[HITL] Routing clarification to text_extractor")
+                await publish_to_queue("fast_text_queue", payload)
                 
                 return {"status": "ok"}
             

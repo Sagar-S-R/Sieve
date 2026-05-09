@@ -2,7 +2,7 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    GOOGLE_API_KEY: str
+    GROQ_API_KEY: str  # Changed from GOOGLE_API_KEY
     RABBITMQ_URL: str
     REDIS_URL: str
     DATABASE_URL: str
@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     PROMETHEUS_PORT: int = 8001
     RABBITMQ_MAX_RETRIES: int = 3
     RABBITMQ_INITIAL_RETRY_DELAY: int = 5
+    TELEGRAM_MAX_RETRIES: int = 3
+    TELEGRAM_RETRY_DELAY: int = 2
 
     class Config:
         env_file = ".env"

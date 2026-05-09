@@ -14,7 +14,7 @@ services:
       - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
       - postgres_data:/var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      - "5433:5432"  # Changed to 5433 to avoid conflict
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U user -d sieve"]
       interval: 10s
@@ -78,7 +78,7 @@ services:
       dockerfile: workers/text_extractor/Dockerfile
     container_name: sieve_text_extractor
     environment:
-      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - GROQ_API_KEY=${GROQ_API_KEY}
       - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
       - REDIS_URL=redis://redis:6379/0
       - DATABASE_URL=postgresql://user:password@postgres:5432/sieve

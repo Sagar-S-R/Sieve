@@ -33,17 +33,28 @@ def process_message(ch, method, properties, body):
         if saved_state:
             # User is replying to clarification request
             logger.info(f"[HITL] Loading saved state for user {user_id}")
+            
+            # Import merge node
+            from workers.text_extractor.nodes.hitl_merge_node import merge_hitl_clarification
+            
+            # Reconstruct state with saved data
             state: AgentState = {
                 "user_id": saved_state.get("user_id", user_id),
                 "group_id": saved_state.get("group_id"),
-                "message_text": data.get("message_text", ""),
-                "intent": saved_state.get("intent"),
-                "db_context": saved_state.get("db_context"),
+                "message_text": data.get("message_text", ""),  # User's clarification
+                "intent": "NEW",  # Force NEW intent
+                "db_context": saved_state.get("message_text", ""),  # Original message
                 "extracted_data": saved_state.get("extracted_data"),
                 "validation_error": None,
                 "needs_human": False,
-                "hitl_prompt": saved_state.get("hitl_prompt")
+                "hitl_prompt": None
             }
+            
+            # Merge clarification with original extraction
+            state = merge_hitl_clarification(state)
+            
+            # Skip workflow, go straight to saving
+            result = state
         else:
             # New message
             state: AgentState = {
@@ -57,9 +68,9 @@ def process_message(ch, method, properties, body):
                 "needs_human": False,
                 "hitl_prompt": None
             }
-        
-        # Run workflow
-        result = app.invoke(state)
+            
+            # Run workflow
+            result = app.invoke(state)
         
         # Track workflow duration
         workflow_duration.observe(time.time() - workflow_start_time)
