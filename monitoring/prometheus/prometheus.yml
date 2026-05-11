@@ -1,0 +1,53 @@
+# Prometheus Configuration for Sieve Monitoring
+
+global:
+  scrape_interval: 15s  # Scrape metrics every 15 seconds
+  evaluation_interval: 15s  # Evaluate rules every 15 seconds
+  external_labels:
+    monitor: 'sieve-monitor'
+
+# Scrape configurations
+scrape_configs:
+  # Text Extractor Worker Metrics
+  - job_name: 'text_extractor'
+    static_configs:
+      - targets: ['text_extractor:8001']
+        labels:
+          service: 'text_extractor'
+          environment: 'production'
+
+  # RabbitMQ Metrics (if management plugin enabled)
+  - job_name: 'rabbitmq'
+    static_configs:
+      - targets: ['rabbitmq:15692']
+        labels:
+          service: 'rabbitmq'
+          environment: 'production'
+
+  # PostgreSQL Metrics (requires postgres_exporter)
+  # Uncomment if you add postgres_exporter
+  # - job_name: 'postgres'
+  #   static_configs:
+  #     - targets: ['postgres_exporter:9187']
+  #       labels:
+  #         service: 'postgres'
+  #         environment: 'production'
+
+  # Redis Metrics (requires redis_exporter)
+  # Uncomment if you add redis_exporter
+  # - job_name: 'redis'
+  #   static_configs:
+  #     - targets: ['redis_exporter:9121']
+  #       labels:
+  #         service: 'redis'
+  #         environment: 'production'
+
+# Alerting configuration (optional)
+# alerting:
+#   alertmanagers:
+#     - static_configs:
+#         - targets: ['alertmanager:9093']
+
+# Rule files (for alerts)
+# rule_files:
+#   - 'alerts.yml'
