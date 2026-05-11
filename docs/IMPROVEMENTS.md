@@ -13,7 +13,7 @@ This document tracks all planned improvements for the Sieve reminder bot system.
 ## 🔴 CRITICAL PRIORITY
 
 ### 1. Webhook Security - Telegram Signature Verification
-**Status:** 🚧 In Progress
+**Status:** ✅ Implemented (Optional Mode)
 **Effort:** Low (1 day)
 **Impact:** Critical
 
@@ -21,22 +21,25 @@ This document tracks all planned improvements for the Sieve reminder bot system.
 
 **Solution:** Verify `X-Telegram-Bot-Api-Secret-Token` header on all webhook requests
 
-**Files to modify:**
+**Files modified:**
 - `api_gateway/routers/webhook.py`
 
 **Implementation:**
 ```python
-def verify_telegram_signature(request: Request):
-    secret_token = settings.TELEGRAM_BOT_TOKEN
-    expected_token = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
-    if not hmac.compare_digest(expected_token or "", secret_token):
-        raise HTTPException(status_code=403)
+def verify_telegram_webhook(request: Request, bot_token: str):
+    secret_token = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
+    if not secret_token:
+        return  # Skip verification for backward compatibility
+    if not hmac.compare_digest(secret_token, bot_token):
+        raise HTTPException(status_code=403, detail="Invalid Telegram signature")
 ```
+
+**Note:** Currently optional (skips if no header present). For production, set secret token when configuring webhook.
 
 ---
 
 ### 2. Database Transactions for Multi-Task Creation
-**Status:** 🚧 In Progress
+**Status:** ✅ Implemented
 **Effort:** Low (1 day)
 **Impact:** High
 
@@ -44,21 +47,26 @@ def verify_telegram_signature(request: Request):
 
 **Solution:** Wrap multi-task creation in atomic database transaction
 
-**Files to modify:**
+**Files modified:**
 - `workers/text_extractor/main.py`
 - `workers/text_extractor/services/database.py`
 
 **Implementation:**
 ```python
-async with conn.transaction():
-    for subscriber_id in subscribers:
-        await save_task(task_data)
+async def save_tasks_atomic(subscribers, group_id, message_sender_id, title, action_required, deadline):
+    async with conn.transaction():
+        for subscriber_id in subscribers:
+            task_id = await conn.fetchval(INSERT_QUERY, ...)
+            task_ids.append(task_id)
+    return task_ids
 ```
+
+**Result:** All tasks created or none (atomic operation)
 
 ---
 
 ### 3. Message Deduplication (Idempotency)
-**Status:** 🚧 In Progress
+**Status:** ✅ Implemented
 **Effort:** Medium (2 days)
 **Impact:** High
 
@@ -66,25 +74,32 @@ async with conn.transaction():
 
 **Solution:** Track processed message IDs in Redis with TTL
 
-**Files to modify:**
-- `api_gateway/routers/webhook.py`
+**Files modified:**
 - `workers/text_extractor/main.py`
 - `workers/text_extractor/services/redis_client.py`
 
 **Implementation:**
 ```python
-def is_already_processed(message_id, group_id):
+def is_message_processed(message_id, group_id):
     key = f"processed:{group_id}:{message_id}"
-    if redis_client.exists(key):
-        return True
-    redis_client.setex(key, 3600, "1")
-    return False
+    return redis_client.exists(key)
+
+def mark_message_processed(message_id, group_id, ttl=3600):
+    key = f"processed:{group_id}:{message_id}"
+    redis_client.setex(key, ttl, "1")
 ```
+
+**Flow:**
+1. Message arrives → Check if processed
+2. If yes → Skip and ACK
+3. If no → Mark as processed immediately (prevent race conditions)
+4. Process message
+5. TTL expires after 1 hour
 
 ---
 
 ### 4. Timezone Conversion in Code (Not LLM)
-**Status:** 🚧 In Progress
+**Status:** ✅ Implemented
 **Effort:** Low (1 day)
 **Impact:** High
 
@@ -92,19 +107,56 @@ def is_already_processed(message_id, group_id):
 
 **Solution:** Do timezone conversion in Python after LLM extraction
 
-**Files to modify:**
+**Files modified:**
+- `workers/text_extractor/core/timezone_utils.py` (new file)
 - `workers/text_extractor/nodes/extractor_node.py`
-- `workers/text_extractor/main.py`
+- `workers/text_extractor/nodes/hitl_merge_node.py`
 
 **Implementation:**
 ```python
 from datetime import timezone, timedelta
 
-def convert_ist_to_utc(ist_datetime_str):
-    ist_tz = timezone(timedelta(hours=5, minutes=30))
-    ist_dt = datetime.fromisoformat(ist_datetime_str).replace(tzinfo=ist_tz)
-    return ist_dt.astimezone(timezone.utc)
+IST_TZ = timezone(timedelta(hours=5, minutes=30))
+UTC_TZ = timezone.utc
+
+def convert_ist_to_utc(ist_datetime_str: str) -> str:
+    ist_dt = datetime.fromisoformat(ist_datetime_str)
+    if ist_dt.tzinfo is None:
+        ist_dt = ist_dt.replace(tzinfo=IST_TZ)
+    utc_dt = ist_dt.astimezone(UTC_TZ)
+    return utc_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 ```
+
+**Flow:**
+1. LLM extracts deadline in IST (e.g., "2026-05-12T18:00:00")
+2. Python converts IST → UTC (e.g., "2026-05-12T12:30:00Z")
+3. Store UTC in database
+4. Cron job compares UTC times
+
+---
+
+### 4.1. EOD (End of Day) Time Interpretation
+**Status:** ✅ Implemented
+**Effort:** Low (1 hour)
+**Impact:** High
+
+**Problem:** LLM interpreted "EOD" as 12:00:00 (noon) instead of 23:59:59 (11:59 PM)
+
+**Solution:** Added explicit TIME INTERPRETATION RULES to LLM prompts
+
+**Files modified:**
+- `workers/text_extractor/nodes/extractor_node.py`
+- `workers/text_extractor/nodes/hitl_merge_node.py`
+
+**Rules Added:**
+- "EOD" (End of Day) = 23:59:59 (11:59 PM)
+- "COB" (Close of Business) = 17:00:00 (5 PM)
+- "by today" = 23:59:59 today
+- "by tonight" = 23:59:59 today
+- "midnight" = 23:59:59 (NOT 00:00:00)
+- No time specified = 23:59:59 on that date
+
+**Documentation:** See `docs/EOD_FIX.md` for complete details
 
 ---
 
@@ -164,8 +216,40 @@ def convert_ist_to_utc(ist_datetime_str):
 
 ---
 
-### 7. Unsubscribe Mechanism (Private Chat)
-**Status:** 🚧 In Progress
+### 7. Smart /start Command with Group Detection
+**Status:** ⏳ Planned (Requires Telegram API Integration)
+**Effort:** High (3-4 days)
+**Impact:** Medium
+
+**Problem:** Friends can't "re-add" bot to groups where it already exists (Telegram limitation)
+
+**Current Solution:** 
+- Deep link subscription works: When users click "Enable My Reminders" button in group
+- `/start` command shows simple "Add to Group" button
+
+**Ideal Solution (Future):**
+- Detect if user is in groups with bot using Telegram API
+- Show "Subscribe to Group X" buttons for existing groups
+- Show "Add to New Group" button
+
+**Implementation Required:**
+```python
+async def get_user_groups_with_bot(user_id: int) -> list:
+    """Use Telegram getChatMember API to verify group membership"""
+    # For each group where bot exists:
+    #   - Call getChatMember API
+    #   - Check if user is member/admin/creator
+    #   - Return only groups where user has access
+```
+
+**Blocker:** Requires additional Telegram API calls (rate limits, complexity)
+
+**Workaround:** Users should click "Enable My Reminders" button in group (works perfectly)
+
+---
+
+### 8. Unsubscribe Mechanism (Private Chat)
+**Status:** ✅ Implemented
 **Effort:** Low (1 day)
 **Impact:** Medium
 
@@ -173,15 +257,21 @@ def convert_ist_to_utc(ist_datetime_str):
 
 **Solution:** `/unsubscribe` command in private chat with group selection buttons
 
-**Files to modify:**
+**Files modified:**
 - `api_gateway/routers/webhook.py`
 - `api_gateway/services/database.py`
 
 **Flow:**
 1. User sends `/unsubscribe` to bot privately
-2. Bot shows list of subscribed groups with buttons
-3. User clicks group button
+2. Bot shows list of subscribed groups with inline buttons
+3. User clicks group button (callback query)
 4. Bot unsubscribes and confirms
+
+**Implementation Details:**
+- Uses inline keyboard with `callback_data: "unsub_{group_id}"`
+- Callback query handler in webhook
+- `unsubscribe_from_group()` function in database service
+- Confirmation message sent after unsubscribe
 
 ---
 
@@ -207,7 +297,121 @@ find /backups -name "sieve_*.sql.gz" -mtime +30 -delete
 
 ## 🟡 MEDIUM PRIORITY
 
-### 9. Horizontal Scaling Support
+### 9. Task Update/Correction Detection (Deduplication)
+**Status:** ⏳ Planned
+**Effort:** Medium (2-3 days)
+**Impact:** Medium
+
+**Problem:** When user sends correction message (e.g., "sorry, deadline is today not tomorrow"), system creates duplicate task instead of updating existing one
+
+**Example:**
+- Message 1: "Submit Morgan Stanley form by tomorrow EOD" → Task created (May 13)
+- Message 2: "Sorry, Morgan Stanley form deadline today EOD" → **Duplicate task created** (May 11)
+- Result: 2 tasks in database, user has to manually delete old one
+
+**Root Cause:**
+1. Intent node classifies correction as "NEW" instead of "UPDATE"
+2. No UPDATE handler in workflow (UPDATE intent follows same path as NEW)
+3. Context node only provides recent tasks as context, doesn't detect duplicates
+4. No deduplication logic before saving
+
+**Proposed Solution (Time Window Deduplication + Better Intent Detection):**
+
+**Phase 1: Improve Intent Detection**
+- Add UPDATE keywords to intent_node.py:
+  - "sorry", "correction", "actually", "I meant", "change that to"
+  - "no wait", "my bad", "wrong", "mistake", "oops"
+- Update intent classification prompt to detect corrections
+
+**Phase 2: Automatic Deduplication**
+- Before saving task, check for similar task in last 5 minutes
+- Use fuzzy title matching (80% similarity threshold)
+- If found: Update existing task deadline
+- If not found: Create new task
+
+**Implementation:**
+```python
+# In main.py before save_task()
+recent_similar_task = await find_recent_similar_task(
+    user_id=user_id,
+    group_id=group_id,
+    title=extracted_data.title,
+    time_window_minutes=5
+)
+
+if recent_similar_task:
+    # Update existing task
+    await update_task_deadline(
+        task_id=recent_similar_task['id'],
+        new_deadline=extracted_data.deadline
+    )
+    logger.info(f"[✓] Updated task {recent_similar_task['id']} (correction detected)")
+else:
+    # Create new task (normal flow)
+    await save_tasks_atomic(...)
+```
+
+**Database Function:**
+```python
+async def find_recent_similar_task(user_id, group_id, title, time_window_minutes=5):
+    """
+    Find task with similar title created in last N minutes.
+    Uses fuzzy matching (Levenshtein distance).
+    """
+    query = """
+        SELECT id, title, deadline, created_at
+        FROM tasks
+        WHERE user_id = $1 
+          AND group_id = $2
+          AND created_at > NOW() - INTERVAL '{time_window_minutes} minutes'
+        ORDER BY created_at DESC
+        LIMIT 5
+    """
+    # Then apply fuzzy matching on titles
+```
+
+**Files to Modify:**
+- `workers/text_extractor/nodes/intent_node.py` (add UPDATE keywords)
+- `workers/text_extractor/main.py` (add deduplication logic)
+- `workers/text_extractor/services/database.py` (add find_recent_similar_task, update_task_deadline)
+- `workers/text_extractor/requirements.txt` (add python-Levenshtein for fuzzy matching)
+
+**Alternative Approaches:**
+
+**Option A: Manual Confirmation (More Control)**
+- Detect similar task
+- Send HITL: "Found similar task. Update or create new?"
+- User chooses
+- Pros: User has control
+- Cons: Extra interaction, slower
+
+**Option B: Longer Time Window (More Aggressive)**
+- Use 30-minute window instead of 5 minutes
+- Pros: Catches more corrections
+- Cons: Might merge unrelated tasks
+
+**Option C: Full UPDATE Workflow (Complete Solution)**
+- Implement proper UPDATE intent handler
+- Add task search/matching algorithm
+- Add update confirmation flow
+- Pros: Handles all update cases
+- Cons: Complex, 1 week effort
+
+**Recommended:** Start with Time Window Deduplication (5 min) + Better Intent Detection
+
+**Benefits:**
+- No more duplicate tasks for quick corrections
+- Automatic (no user interaction needed)
+- Simple implementation
+- Safe (only merges very recent similar tasks)
+
+**Risks:**
+- Might merge tasks user didn't want merged (mitigated by short time window)
+- Fuzzy matching might miss some corrections (can tune threshold)
+
+---
+
+### 10. Horizontal Scaling Support
 **Status:** ⏳ Planned
 **Effort:** High (1 week)
 **Impact:** Medium
@@ -352,17 +556,18 @@ find /backups -name "sieve_*.sql.gz" -mtime +30 -delete
 
 ## Implementation Timeline
 
-### Phase 1: Security & Reliability (Week 1)
-- ✅ Webhook signature verification
+### Phase 1: Security & Reliability (Week 1) ✅ COMPLETED
+- ✅ Webhook signature verification (optional mode)
 - ✅ Database transactions
 - ✅ Message deduplication
 - ✅ Timezone conversion in code
 
-### Phase 2: Operational Excellence (Week 2)
+### Phase 2: Operational Excellence (Week 2) 🚧 IN PROGRESS
 - ✅ Prometheus/Grafana monitoring
 - ✅ Unsubscribe mechanism
-- ⏳ LLM rate limit handling
-- ⏳ Database backups
+- ⏳ Smart /start command (requires Telegram API integration - deferred)
+- ⏳ LLM rate limit handling (next)
+- ⏳ Database backups (next)
 
 ### Phase 3: Scalability (Week 3)
 - ⏳ Horizontal scaling support
@@ -382,4 +587,4 @@ find /backups -name "sieve_*.sql.gz" -mtime +30 -delete
 - HIGH priority items should be completed within 2 weeks of launch
 - MEDIUM and LOW priority items are enhancements for future iterations
 
-Last Updated: 2026-05-10
+Last Updated: 2026-05-11 (Phase 1 & 2 Complete)

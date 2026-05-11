@@ -225,7 +225,7 @@ async def telegram_webhook(request: Request):
                         await send_telegram_dm(user_id, error_msg)
                         return {"status": "ok"}
                 
-                # Regular /start (no deep link)
+                # Regular /start (no deep link) - Simple welcome message
                 welcome_message = (
                     "👋 <b>Welcome to Sieve!</b>\n\n"
                     "I'm your smart reminder assistant. I can help you:\n"
@@ -240,7 +240,8 @@ async def telegram_webhook(request: Request):
                     "💡 <b>Example:</b>\n"
                     "\"Remind me to submit assignment tomorrow at 5pm\"\n\n"
                     "📋 <b>Commands:</b>\n"
-                    "/unsubscribe - Manage your subscriptions"
+                    "/unsubscribe - Manage your subscriptions\n"
+                    "/help - Show help message"
                 )
                 
                 bot_username = "sieve7_bot"

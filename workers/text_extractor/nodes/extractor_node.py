@@ -33,14 +33,25 @@ IMPORTANT RULES:
 - If user says "10 PM", they mean 10 PM IST
 - ALL dates must be in {current_year} or later (never 2024 or earlier)
 
+TIME INTERPRETATION RULES:
+- "EOD" (End of Day) = 23:59:59 (11:59 PM)
+- "end of day" = 23:59:59 (11:59 PM)
+- "by end of day" = 23:59:59 (11:59 PM)
+- "COB" (Close of Business) = 17:00:00 (5 PM)
+- "by today" = 23:59:59 today
+- "by tonight" = 23:59:59 today
+- "midnight" = 23:59:59 (NOT 00:00:00 of next day)
+- If no time specified but date given = 23:59:59 on that date
+
 OUTPUT FORMAT:
 - Output deadline in IST time (NOT UTC)
 - Format: YYYY-MM-DDTHH:MM:SS (no Z suffix, no timezone)
 - Example: "2026-05-10T22:00:00" for 10 PM IST on May 10, 2026
+- Example: "2026-05-10T23:59:59" for EOD on May 10, 2026
 
 CLARIFICATION RULES:
 - If message is vague (just "deadline" or "form" without details), set needs_clarification=true
-- If no specific time mentioned, set needs_clarification=true
+- If no specific time mentioned AND not EOD/COB, set needs_clarification=true
 - If title would be generic (like "Fee payment"), set needs_clarification=true
 
 Respond with ONLY a JSON object in this format:

@@ -46,6 +46,16 @@ IMPORTANT RULES:
 - Example: "2026-05-12T18:00:00" for 6 PM IST on May 12, 2026
 - Merge the clarification with original extraction to create complete task details
 
+TIME INTERPRETATION RULES:
+- "EOD" (End of Day) = 23:59:59 (11:59 PM)
+- "end of day" = 23:59:59 (11:59 PM)
+- "by end of day" = 23:59:59 (11:59 PM)
+- "COB" (Close of Business) = 17:00:00 (5 PM)
+- "by today" = 23:59:59 today
+- "by tonight" = 23:59:59 today
+- "midnight" = 23:59:59 (NOT 00:00:00 of next day)
+- If no time specified but date given = 23:59:59 on that date
+
 Respond with ONLY a JSON object (no explanations):
 {{
   "event_category": "deadline",
