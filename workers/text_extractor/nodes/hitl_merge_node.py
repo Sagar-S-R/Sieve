@@ -1,6 +1,7 @@
 from workers.text_extractor.graph.state import AgentState
 from workers.text_extractor.core.llm import llm
 from workers.text_extractor.core.logger import logger
+from workers.text_extractor.core.timezone_utils import get_current_ist_time, get_current_year, convert_ist_to_utc
 from shared.schemas import EventExtraction
 import json
 
@@ -16,12 +17,20 @@ def merge_hitl_clarification(state: AgentState) -> AgentState:
     })
     
     # Get original extraction and user's clarification
-    original_message = state.get("db_context", "")  # We'll store original message here
+    original_message = state.get("db_context", "")  # Original message
     clarification = state.get("message_text", "")
     extracted_data = state.get("extracted_data", {})
     
+    # Get current time in IST
+    current_datetime_str = get_current_ist_time()
+    current_year = get_current_year()
+    
     # Build prompt to merge clarification
-    prompt = f"""You are helping complete a task extraction. The user provided clarification.
+    prompt = f"""CRITICAL: Today's date and time is {current_datetime_str}. The current year is {current_year}.
+
+You are helping complete a task extraction. The user provided clarification.
+
+Original message: "{original_message}"
 
 Original extraction:
 - Title: {extracted_data.get('title', 'Unknown')}
@@ -30,16 +39,19 @@ Original extraction:
 
 User's clarification: "{clarification}"
 
-Parse the clarification and provide the COMPLETE task details with the clarification merged in.
-If the clarification is a deadline, parse it into ISO 8601 format (YYYY-MM-DDTHH:MM:SSZ).
-If the clarification adds context to the title or action, merge it appropriately.
+IMPORTANT RULES:
+- User is in INDIA (IST timezone)
+- If clarification mentions time like "6 PM tomorrow", calculate the actual date from today ({current_datetime_str})
+- Output deadline in IST format: YYYY-MM-DDTHH:MM:SS (no Z, no timezone suffix)
+- Example: "2026-05-12T18:00:00" for 6 PM IST on May 12, 2026
+- Merge the clarification with original extraction to create complete task details
 
-Respond with ONLY a JSON object:
+Respond with ONLY a JSON object (no explanations):
 {{
   "event_category": "deadline",
-  "title": "Complete title",
+  "title": "Complete specific title",
   "action_required": "Complete action description",
-  "deadline": "2026-05-10T23:59:59Z",
+  "deadline": "2026-05-12T18:00:00",
   "confidence_score": 0.9,
   "needs_clarification": false
 }}"""
@@ -56,6 +68,15 @@ Respond with ONLY a JSON object:
         
         result_dict = json.loads(content)
         result = EventExtraction(**result_dict)
+        
+        # CRITICAL: Convert IST deadline to UTC
+        if result.deadline:
+            deadline_utc = convert_ist_to_utc(str(result.deadline))
+            if deadline_utc:
+                result.deadline = deadline_utc
+                logger.info(f"HITL: Converted deadline to UTC: {deadline_utc}", extra={"node": "hitl_merge_node"})
+            else:
+                logger.warning("HITL: Failed to convert deadline to UTC", extra={"node": "hitl_merge_node"})
         
         state["extracted_data"] = result
         state["needs_human"] = False  # Clarification complete

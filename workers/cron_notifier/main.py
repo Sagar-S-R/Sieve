@@ -5,6 +5,14 @@ from workers.cron_notifier.services.database import init_pool, close_pool
 from workers.cron_notifier.core.logger import logger
 
 
+async def job_wrapper():
+    """Wrapper to ensure async function runs properly in scheduler."""
+    try:
+        await sweep_and_notify()
+    except Exception as e:
+        logger.error(f"❌ Job execution failed: {e}", exc_info=True)
+
+
 async def main():
     """
     Main entry point for cron_notifier.
@@ -23,7 +31,7 @@ async def main():
     
     # Add job to run every 60 seconds
     scheduler.add_job(
-        sweep_and_notify,
+        job_wrapper,
         trigger='interval',
         seconds=60,
         id='reminder_sweep',
@@ -34,6 +42,10 @@ async def main():
     # Start scheduler
     scheduler.start()
     logger.info("✓ Scheduler started (running every 60 seconds)")
+    
+    # Run once immediately on startup
+    logger.info("🔄 Running initial sweep...")
+    await job_wrapper()
     
     try:
         # Keep the event loop running

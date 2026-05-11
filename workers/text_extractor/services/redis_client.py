@@ -30,3 +30,31 @@ def check_hitl_lock(user_id: int) -> dict | None:
 def clear_hitl_lock(user_id: int):
     key = f"awaiting_clarification:{user_id}"
     redis_client.delete(key)
+
+
+def is_message_processed(message_id: int, group_id: int) -> bool:
+    """
+    Check if a message has already been processed (idempotency check).
+    
+    Args:
+        message_id: Telegram message ID
+        group_id: Group ID where message was sent
+        
+    Returns:
+        True if already processed, False otherwise
+    """
+    key = f"processed:{group_id}:{message_id}"
+    return redis_client.exists(key) > 0
+
+
+def mark_message_processed(message_id: int, group_id: int, ttl_seconds: int = 3600):
+    """
+    Mark a message as processed to prevent duplicate processing.
+    
+    Args:
+        message_id: Telegram message ID
+        group_id: Group ID where message was sent
+        ttl_seconds: Time to live (default 1 hour)
+    """
+    key = f"processed:{group_id}:{message_id}"
+    redis_client.setex(key, ttl_seconds, "1")

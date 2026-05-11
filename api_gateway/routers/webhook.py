@@ -1,10 +1,31 @@
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, HTTPException
 from api_gateway.services.redis_client import get_hitl_lock, delete_hitl_lock
 from api_gateway.services.database import save_completed_task
 from api_gateway.services.rabbitmq import publish_to_queue
 from api_gateway.services.telegram import send_telegram_dm
+import hmac
 
 router = APIRouter()
+
+
+def verify_telegram_webhook(request: Request, bot_token: str):
+    """
+    Verify Telegram webhook signature to prevent unauthorized access.
+    
+    Note: Telegram's secret token must be set when configuring the webhook.
+    If not set, this check is skipped (for backward compatibility).
+    """
+    secret_token = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
+    
+    # If no secret token in header, skip verification (webhook not configured with secret)
+    # In production, you should always set a secret token
+    if not secret_token:
+        return  # Skip verification
+    
+    # Use constant-time comparison to prevent timing attacks
+    if not hmac.compare_digest(secret_token, bot_token):
+        raise HTTPException(status_code=403, detail="Invalid Telegram signature")
+
 
 # Zero-cost triage keywords - expanded to catch more reminder-like messages
 TRIAGE_KEYWORDS = [
@@ -38,12 +59,52 @@ async def telegram_webhook(request: Request):
     Main webhook endpoint for Telegram updates.
     
     Flow:
-    1. Private DM → Check HITL lock → Save task if lock exists
-    2. Group message with media → Route to heavy_media_queue
-    3. Group message with text → Triage keywords → Route to fast_text_queue or drop
+    1. Bot added to group → Auto-subscribe the adder
+    2. Private DM → Check HITL lock → Save task if lock exists
+    3. Group message with media → Route to heavy_media_queue
+    4. Group message with text → Triage keywords → Route to fast_text_queue or drop
     """
     try:
+        # CRITICAL: Verify Telegram webhook signature
+        from api_gateway.core.config import settings
+        verify_telegram_webhook(request, settings.TELEGRAM_BOT_TOKEN)
+        
         data = await request.json()
+        
+        # Handle callback queries (button clicks)
+        callback_query = data.get("callback_query")
+        if callback_query:
+            from api_gateway.services.database import unsubscribe_from_group
+            import httpx
+            
+            query_id = callback_query.get("id")
+            user_id = callback_query.get("from", {}).get("id")
+            callback_data = callback_query.get("data", "")
+            
+            # Handle unsubscribe button
+            if callback_data.startswith("unsub_"):
+                group_id = int(callback_data.replace("unsub_", ""))
+                success = await unsubscribe_from_group(group_id, user_id)
+                
+                if success:
+                    response_text = "✅ Unsubscribed successfully!"
+                else:
+                    response_text = "ℹ️ You weren't subscribed to this group."
+                
+                # Answer callback query
+                answer_url = f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}/answerCallbackQuery"
+                
+                async with httpx.AsyncClient() as client:
+                    await client.post(answer_url, json={
+                        "callback_query_id": query_id,
+                        "text": response_text,
+                        "show_alert": False
+                    })
+                
+                # Update message
+                await send_telegram_dm(user_id, f"{response_text}\n\nSend /unsubscribe to manage other subscriptions.")
+                
+                return {"status": "ok"}
         
         # Extract message data
         message = data.get("message", {})
@@ -60,11 +121,111 @@ async def telegram_webhook(request: Request):
         document = message.get("document")
         
         # ============================================
-        # PRIVATE DM - ONBOARDING & HITL
+        # BOT ADDED TO GROUP - SEND WELCOME WITH DEEP LINK
+        # ============================================
+        new_chat_members = message.get("new_chat_members", [])
+        if new_chat_members and chat_type in ["group", "supergroup"]:
+            from api_gateway.services.database import subscribe_to_group
+            
+            # Check if our bot was added
+            bot_username = "sieve7_bot"
+            for member in new_chat_members:
+                if member.get("username") == bot_username or member.get("is_bot"):
+                    group_id = chat.get("id")
+                    group_title = chat.get("title", "this group")
+                    
+                    # Auto-subscribe the person who added the bot
+                    await subscribe_to_group(group_id, user_id)
+                    
+                    # Send welcome message IN THE GROUP with deep link button
+                    deep_link = f"https://t.me/{bot_username}?start=sub_{group_id}"
+                    
+                    group_welcome = (
+                        f"🤖 <b>Sieve Bot Activated</b>\n\n"
+                        f"I'm now monitoring this group for tasks and deadlines.\n\n"
+                        f"💡 <b>How it works:</b>\n"
+                        f"• Anyone can mention tasks naturally in chat\n"
+                        f"• I'll extract deadlines automatically\n"
+                        f"• Subscribers get private DM reminders\n\n"
+                        f"🔔 <b>Want reminders?</b>\n"
+                        f"Click the button below to enable private notifications!"
+                    )
+                    
+                    inline_keyboard = {
+                        "inline_keyboard": [[
+                            {
+                                "text": "🔔 Enable My Reminders",
+                                "url": deep_link
+                            }
+                        ]]
+                    }
+                    
+                    # Send to group (not DM)
+                    from api_gateway.core.config import settings as api_settings
+                    import httpx
+                    
+                    send_url = f"https://api.telegram.org/bot{api_settings.TELEGRAM_BOT_TOKEN}/sendMessage"
+                    async with httpx.AsyncClient() as client:
+                        await client.post(send_url, json={
+                            "chat_id": group_id,
+                            "text": group_welcome,
+                            "parse_mode": "HTML",
+                            "reply_markup": inline_keyboard
+                        })
+                    
+                    # Also send DM to the person who added it
+                    welcome_dm = (
+                        f"🎉 <b>Thanks for adding me to {group_title}!</b>\n\n"
+                        f"You're now subscribed to reminders from this group.\n\n"
+                        f"💡 <b>Want others to get reminders too?</b>\n"
+                        f"They can click the button I posted in the group!"
+                    )
+                    await send_telegram_dm(user_id, welcome_dm)
+                    
+                    return {"status": "ok"}
+        
+        # ============================================
+        # PRIVATE DM - DEEP LINK SUBSCRIPTION & HITL
         # ============================================
         if chat_type == "private":
-            # Handle /start command
+            # Handle /start command with deep link subscription
             if text and text.startswith("/start"):
+                # Check if it's a deep link subscription (e.g., /start sub_-100123456789)
+                if text.startswith("/start sub_"):
+                    from api_gateway.services.database import subscribe_to_group
+                    
+                    # Extract group ID from deep link
+                    group_id_str = text.replace("/start sub_", "").strip()
+                    
+                    try:
+                        group_id = int(group_id_str)
+                        
+                        # Subscribe user to the group
+                        success = await subscribe_to_group(group_id, user_id)
+                        
+                        if success:
+                            confirmation_msg = (
+                                f"✅ <b>Subscription Confirmed!</b>\n\n"
+                                f"You're now subscribed to reminders from this group.\n\n"
+                                f"💡 <b>What happens next:</b>\n"
+                                f"• When tasks are mentioned in the group, I'll extract them\n"
+                                f"• If I need clarification, I'll DM you\n"
+                                f"• You'll get reminders 24h, 1h, and at deadline\n\n"
+                                f"🔕 <b>Want to unsubscribe?</b>\n"
+                                f"Send /unsubscribe to manage your subscriptions."
+                            )
+                        else:
+                            confirmation_msg = "✅ You're already subscribed to this group!"
+                        
+                        await send_telegram_dm(user_id, confirmation_msg)
+                        return {"status": "ok"}
+                        
+                    except ValueError:
+                        error_msg = "❌ Invalid subscription link. Please use the button from the group."
+                        await send_telegram_dm(user_id, error_msg)
+                        return {"status": "ok"}
+                
+                # Regular /start (no deep link)
                 welcome_message = (
                     "👋 <b>Welcome to Sieve!</b>\n\n"
                     "I'm your smart reminder assistant. I can help you:\n"
@@ -72,19 +233,17 @@ async def telegram_webhook(request: Request):
                     "• Set deadlines automatically\n"
                     "• Send you notifications when tasks are due\n\n"
                     "🚀 <b>Get Started:</b>\n"
-                    "1. Add me to your group\n"
-                    "2. Just chat naturally and mention tasks\n"
-                    "3. I'll extract and remind you automatically!\n\n"
+                    "1. Add me to your group using the button below\n"
+                    "2. I'll auto-subscribe you to that group\n"
+                    "3. Just chat naturally and mention tasks\n"
+                    "4. I'll extract and remind you automatically!\n\n"
                     "💡 <b>Example:</b>\n"
                     "\"Remind me to submit assignment tomorrow at 5pm\"\n\n"
-                    "Ready to add me to a group? Click the button below!"
+                    "📋 <b>Commands:</b>\n"
+                    "/unsubscribe - Manage your subscriptions"
                 )
                 
-                # Get bot username for the link
-                bot_username = "sieve7_bot"  # Your bot username
-                
-                # Create inline keyboard with "Add to Group" button
-                # Note: Using startgroup without admin parameter - bot works as regular member
+                bot_username = "sieve7_bot"
                 inline_keyboard = {
                     "inline_keyboard": [
                         [
@@ -92,17 +251,45 @@ async def telegram_webhook(request: Request):
                                 "text": "➕ Add to Group",
                                 "url": f"https://t.me/{bot_username}?startgroup=start"
                             }
-                        ],
-                        [
-                            {
-                                "text": "📖 Help",
-                                "callback_data": "help"
-                            }
                         ]
                     ]
                 }
                 
                 await send_telegram_dm(user_id, welcome_message, reply_markup=inline_keyboard)
+                return {"status": "ok"}
+            
+            # Handle /unsubscribe command
+            if text and text.startswith("/unsubscribe"):
+                from api_gateway.services.database import get_user_subscriptions
+                
+                subscriptions = await get_user_subscriptions(user_id)
+                
+                if not subscriptions:
+                    msg = "ℹ️ You're not subscribed to any groups yet."
+                    await send_telegram_dm(user_id, msg)
+                    return {"status": "ok"}
+                
+                # Build inline keyboard with unsubscribe buttons
+                keyboard_buttons = []
+                for sub in subscriptions:
+                    group_id = sub['group_id']
+                    button_text = f"🔕 Unsubscribe from Group {group_id}"
+                    callback_data = f"unsub_{group_id}"
+                    
+                    keyboard_buttons.append([{
+                        "text": button_text,
+                        "callback_data": callback_data
+                    }])
+                
+                inline_keyboard = {"inline_keyboard": keyboard_buttons}
+                
+                msg = (
+                    "📋 <b>Your Subscriptions</b>\n\n"
+                    f"You're subscribed to {len(subscriptions)} group(s).\n"
+                    "Click a button below to unsubscribe:"
+                )
+                
+                await send_telegram_dm(user_id, msg, reply_markup=inline_keyboard)
                 return {"status": "ok"}
             
             # Handle /help command
@@ -157,7 +344,8 @@ async def telegram_webhook(request: Request):
             payload = {
                 "user_id": user_id,
                 "group_id": group_id,
-                "message_text": text
+                "message_text": text,
+                "message_id": message.get("message_id")  # For deduplication
             }
             
             # Check for media (images or documents)
@@ -196,6 +384,11 @@ async def telegram_webhook(request: Request):
         
         return {"status": "ok"}
         
+    except HTTPException as http_exc:
+        # Re-raise HTTP exceptions (like 403 from signature verification)
+        raise http_exc
     except Exception as e:
+        import traceback
         print(f"[ERROR] Webhook error: {e}")
+        print(f"[ERROR] Traceback: {traceback.format_exc()}")
         return {"status": "error", "message": str(e)}

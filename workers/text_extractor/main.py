@@ -26,6 +26,20 @@ def process_message(ch, method, properties, body):
     try:
         data = json.loads(body)
         user_id = data.get("user_id", 0)
+        group_id = data.get("group_id")
+        message_id = data.get("message_id")
+        
+        # CRITICAL: Check for duplicate message (idempotency)
+        if message_id and group_id:
+            from workers.text_extractor.services.redis_client import is_message_processed, mark_message_processed
+            
+            if is_message_processed(message_id, group_id):
+                logger.info(f"[!] Message {message_id} already processed. Skipping.")
+                ch.basic_ack(delivery_tag=method.delivery_tag)
+                return
+            
+            # Mark as processed immediately to prevent race conditions
+            mark_message_processed(message_id, group_id)
         
         # Check for HITL lock
         saved_state = check_hitl_lock(user_id)
@@ -34,13 +48,15 @@ def process_message(ch, method, properties, body):
             # User is replying to clarification request
             logger.info(f"[HITL] Loading saved state for user {user_id}")
             
+            group_id = saved_state.get("group_id")
+            
             # Import merge node
             from workers.text_extractor.nodes.hitl_merge_node import merge_hitl_clarification
             
             # Reconstruct state with saved data
             state: AgentState = {
-                "user_id": saved_state.get("user_id", user_id),
-                "group_id": saved_state.get("group_id"),
+                "user_id": user_id,  # Use the replying user's ID
+                "group_id": group_id,
                 "message_text": data.get("message_text", ""),  # User's clarification
                 "intent": "NEW",  # Force NEW intent
                 "db_context": saved_state.get("message_text", ""),  # Original message
@@ -82,21 +98,50 @@ def process_message(ch, method, properties, body):
         elif result.get("intent") == "NEW" and not result.get("needs_human"):
             # Save task
             extracted_data = result.get('extracted_data')
-            if extracted_data:
-                task_data = {
-                    'user_id': result.get('user_id'),
-                    'group_id': result.get('group_id'),
-                    'title': extracted_data.title,
-                    'action_required': extracted_data.action_required,
-                    'deadline': extracted_data.deadline
-                }
-                asyncio.run(save_task(task_data))
-                logger.info("[✓] Task saved!")
-                
-                # Clear HITL lock if this was a resolution
+            group_id = result.get('group_id')
+            message_sender_id = result.get('user_id')
+            
+            if extracted_data and group_id:
+                # Check if this is a HITL resolution (saved_state exists)
                 if saved_state:
-                    clear_hitl_lock(result.get('user_id'))
-                    logger.info("[✓] HITL lock cleared")
+                    # HITL resolution: Save task ONLY for the user who replied
+                    task_data = {
+                        'user_id': user_id,  # Only the replying user
+                        'group_id': group_id,
+                        'message_sender_id': message_sender_id,
+                        'title': extracted_data.title,
+                        'action_required': extracted_data.action_required,
+                        'deadline': extracted_data.deadline
+                    }
+                    asyncio.run(save_task(task_data))
+                    logger.info(f"[✓] HITL resolved: Task saved for user {user_id}")
+                    
+                    # Clear lock only for this user
+                    clear_hitl_lock(user_id)
+                    logger.info(f"[✓] HITL lock cleared for user {user_id}")
+                else:
+                    # Normal flow: Save task for ALL subscribers atomically
+                    from workers.text_extractor.services.database import get_group_subscribers, save_tasks_atomic
+                    subscribers = asyncio.run(get_group_subscribers(group_id))
+                    
+                    if subscribers:
+                        logger.info(f"[✓] Found {len(subscribers)} subscriber(s) for group {group_id}")
+                        
+                        # CRITICAL: Atomic transaction - all tasks created or none
+                        try:
+                            task_ids = asyncio.run(save_tasks_atomic(
+                                subscribers=subscribers,
+                                group_id=group_id,
+                                message_sender_id=message_sender_id,
+                                title=extracted_data.title,
+                                action_required=extracted_data.action_required,
+                                deadline=extracted_data.deadline
+                            ))
+                            logger.info(f"[✓] {len(task_ids)} tasks created atomically")
+                        except Exception as e:
+                            logger.error(f"[✗] Atomic task creation failed: {e}")
+                    else:
+                        logger.warning(f"[!] No subscribers found for group {group_id}")
         
         ch.basic_ack(delivery_tag=method.delivery_tag)
         

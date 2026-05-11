@@ -56,12 +56,13 @@ async def save_task(task_data: dict):
             
             task_id = await conn.fetchval(
                 """
-                INSERT INTO tasks (user_id, group_id, title, action_required, deadline, is_sent)
-                VALUES ($1, $2, $3, $4, $5, false)
+                INSERT INTO tasks (user_id, group_id, message_sender_id, title, action_required, deadline, reminder_level)
+                VALUES ($1, $2, $3, $4, $5, $6, 0)
                 RETURNING id
                 """,
                 task_data.get('user_id'),
                 task_data.get('group_id'),
+                task_data.get('message_sender_id'),
                 task_data.get('title'),
                 task_data.get('action_required'),
                 deadline
@@ -76,3 +77,92 @@ async def save_task(task_data: dict):
     finally:
         duration = time.time() - start_time
         db_operation_latency.labels(operation="save_task").observe(duration)
+
+
+async def get_group_subscribers(group_id: int) -> list:
+    """
+    Get all subscribers for a group.
+    
+    Args:
+        group_id: The Telegram group ID
+        
+    Returns:
+        List of subscriber IDs
+    """
+    try:
+        conn = await get_db_connection()
+        try:
+            rows = await conn.fetch(
+                """
+                SELECT subscriber_id
+                FROM group_subscriptions
+                WHERE group_id = $1
+                ORDER BY subscribed_at ASC
+                """,
+                group_id
+            )
+            return [row['subscriber_id'] for row in rows]
+        finally:
+            await conn.close()
+    except Exception as e:
+        logger.error(f"[DB] Error fetching subscribers for group {group_id}: {e}", exc_info=True)
+        return []
+
+
+async def save_tasks_atomic(subscribers: list, group_id: int, message_sender_id: int, 
+                            title: str, action_required: str, deadline):
+    """
+    Save tasks for all subscribers atomically (all-or-nothing).
+    
+    Args:
+        subscribers: List of subscriber IDs
+        group_id: Group ID
+        message_sender_id: Who sent the original message
+        title: Task title
+        action_required: Task action
+        deadline: Task deadline
+        
+    Returns:
+        List of created task IDs
+    """
+    start_time = time.time()
+    try:
+        conn = await get_db_connection()
+        try:
+            # Parse deadline if string
+            if isinstance(deadline, str):
+                from datetime import datetime
+                deadline = datetime.fromisoformat(deadline.replace('Z', '+00:00'))
+            
+            task_ids = []
+            
+            # CRITICAL: Use transaction for atomic operation
+            async with conn.transaction():
+                for subscriber_id in subscribers:
+                    task_id = await conn.fetchval(
+                        """
+                        INSERT INTO tasks (user_id, group_id, message_sender_id, title, action_required, deadline, reminder_level)
+                        VALUES ($1, $2, $3, $4, $5, $6, 0)
+                        RETURNING id
+                        """,
+                        subscriber_id,
+                        group_id,
+                        message_sender_id,
+                        title,
+                        action_required,
+                        deadline
+                    )
+                    task_ids.append(task_id)
+                    logger.info(f"[DB] Task {task_id} saved for subscriber {subscriber_id}")
+            
+            logger.info(f"[DB] Transaction complete: {len(task_ids)} tasks created")
+            return task_ids
+            
+        finally:
+            await conn.close()
+    except Exception as e:
+        logger.error(f"[DB] Transaction failed, rolling back: {e}", exc_info=True)
+        raise
+    finally:
+        duration = time.time() - start_time
+        db_operation_latency.labels(operation="save_tasks_atomic").observe(duration)
