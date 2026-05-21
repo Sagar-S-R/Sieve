@@ -42,6 +42,12 @@ CREATE INDEX IF NOT EXISTS idx_tasks_group_created ON tasks(group_id, created_at
 -- Create index on deadline and reminder_level for cron_notifier queries
 CREATE INDEX IF NOT EXISTS idx_tasks_deadline_reminder ON tasks(deadline, reminder_level) WHERE reminder_level < 3;
 
+-- Create index on user_id for task management commands (list user's tasks)
+CREATE INDEX IF NOT EXISTS idx_tasks_user_id ON tasks(user_id);
+
+-- Create index on group_id and title for group update detection (fuzzy matching)
+CREATE INDEX IF NOT EXISTS idx_tasks_group_title ON tasks(group_id, LOWER(title));
+
 -- Create function to automatically update updated_at timestamp
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$

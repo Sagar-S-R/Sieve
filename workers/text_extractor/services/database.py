@@ -208,3 +208,58 @@ async def save_tasks_atomic(subscribers: list, group_id: int, message_sender_id:
     finally:
         duration = time.time() - start_time
         db_operation_latency.labels(operation="save_tasks_atomic").observe(duration)
+
+
+async def update_tasks_by_title_and_group(group_id: int, title: str, new_deadline) -> int:
+    """
+    Update ALL tasks in a group with matching title.
+    Used when group message corrects a previous task.
+    
+    Args:
+        group_id: Group ID
+        title: Task title to match (case-insensitive)
+        new_deadline: New deadline (UTC datetime or string)
+        
+    Returns:
+        Number of tasks updated
+    """
+    from workers.text_extractor.services.redis_client import invalidate_recent_tasks_cache
+    from datetime import datetime
+    
+    start_time = time.time()
+    try:
+        conn = await get_db_connection()
+        try:
+            # Parse deadline if string
+            if isinstance(new_deadline, str):
+                new_deadline = datetime.fromisoformat(new_deadline.replace('Z', '+00:00'))
+            
+            query = """
+                UPDATE tasks
+                SET deadline = $1, updated_at = NOW()
+                WHERE group_id = $2 
+                  AND LOWER(title) = LOWER($3)
+                  AND deadline > NOW() - INTERVAL '7 days'
+                RETURNING id
+            """
+            
+            rows = await conn.fetch(query, new_deadline, group_id, title)
+            updated_count = len(rows)
+            
+            if updated_count > 0:
+                logger.info(f"[DB] Updated {updated_count} tasks for group {group_id}, title: {title}")
+                # Invalidate cache
+                invalidate_recent_tasks_cache(group_id)
+            else:
+                logger.info(f"[DB] No tasks found to update for group {group_id}, title: {title}")
+            
+            return updated_count
+            
+        finally:
+            await conn.close()
+    except Exception as e:
+        logger.error(f"[DB] Error updating tasks: {e}", exc_info=True)
+        return 0
+    finally:
+        duration = time.time() - start_time
+        db_operation_latency.labels(operation="update_tasks_by_title_and_group").observe(duration)

@@ -528,14 +528,52 @@ async def find_recent_similar_task(user_id, group_id, title, time_window_minutes
 
 ### 16. Task Editing/Deletion
 ### 16. Task Editing/Deletion
-**Status:** ⏳ Planned
+**Status:** 🚧 In Progress
 **Effort:** Medium (1 week)
-**Impact:** Low
+**Impact:** Medium
 
 **Features:**
 - `/tasks` - List your tasks
 - `/delete <task_id>` - Delete a task
 - `/edit <task_id>` - Edit deadline
+
+**Implementation:**
+- ✅ Database indexes added (user_id, group_title)
+- ✅ Database functions (get_user_tasks, get_task_by_id, delete_task, update_task_deadline)
+- ✅ Redis state management (edit_task state with 5-min TTL)
+- ✅ Command handlers (/tasks, /delete, /edit)
+- ✅ LLM deadline parsing for natural language
+- ✅ Group update detection (context node enhancement)
+- ✅ Bulk update function (update_tasks_by_title_and_group)
+- ✅ Group update handler in workflow
+- ⏳ Testing and verification
+
+**How It Works:**
+
+**Private Chat Commands:**
+- User sends `/tasks` → Shows all their tasks (upcoming/overdue)
+- User sends `/delete 5` → Deletes task #5 (ownership check)
+- User sends `/edit 5` → Interactive flow to change deadline
+  - Bot asks for new deadline
+  - User replies "tomorrow 5pm"
+  - LLM parses deadline
+  - Task updated
+
+**Group Message Updates:**
+- User posts: "Submit form by May 13"
+- Tasks created for all subscribers
+- Later, user posts: "Sorry, form deadline is May 20"
+- Context node detects correction keywords
+- Fuzzy matching finds "Submit form" task
+- ALL subscribers' tasks updated to May 20
+- Confirmation sent to group
+
+**Key Features:**
+- Individual task management in private chat
+- Group corrections update everyone
+- Natural language deadline parsing
+- Ownership checks for security
+- Cache invalidation on modifications
 
 ---
 

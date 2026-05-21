@@ -304,11 +304,37 @@ async def telegram_webhook(request: Request):
                     "• \"Submit assignment by Friday\"\n\n"
                     "<b>Commands:</b>\n"
                     "/start - Show welcome message\n"
+                    "/tasks - List your tasks\n"
+                    "/delete <id> - Delete a task\n"
+                    "/edit <id> - Edit task deadline\n"
+                    "/unsubscribe - Manage subscriptions\n"
                     "/help - Show this help message\n\n"
                     "Need more help? Contact @YourSupportUsername"
                 )
                 
                 await send_telegram_dm(user_id, help_message)
+                return {"status": "ok"}
+            
+            # Handle /tasks command
+            if text and text.strip() == "/tasks":
+                await handle_tasks_command(user_id)
+                return {"status": "ok"}
+            
+            # Handle /delete command
+            if text and text.startswith("/delete"):
+                await handle_delete_command(user_id, text)
+                return {"status": "ok"}
+            
+            # Handle /edit command
+            if text and text.startswith("/edit"):
+                await handle_edit_command(user_id, text)
+                return {"status": "ok"}
+            
+            # Check if user is in edit mode (replying with new deadline)
+            from api_gateway.services.redis_client import get_edit_task_state
+            edit_state = await get_edit_task_state(user_id)
+            if edit_state:
+                await handle_edit_reply(user_id, text)
                 return {"status": "ok"}
             
             # Check for HITL lock
@@ -393,3 +419,286 @@ async def telegram_webhook(request: Request):
         print(f"[ERROR] Webhook error: {e}")
         print(f"[ERROR] Traceback: {traceback.format_exc()}")
         return {"status": "error", "message": str(e)}
+
+
+# ============================================================================
+# TASK MANAGEMENT COMMAND HANDLERS
+# ============================================================================
+
+def format_deadline(deadline) -> str:
+    """
+    Format deadline in user-friendly IST format.
+    
+    Args:
+        deadline: UTC datetime
+        
+    Returns:
+        Formatted string like "May 12, 2026 at 5:30 PM"
+    """
+    from datetime import timezone, timedelta
+    
+    # Convert to IST
+    ist_tz = timezone(timedelta(hours=5, minutes=30))
+    deadline_ist = deadline.astimezone(ist_tz)
+    
+    # Format and remove leading zero from hour
+    formatted = deadline_ist.strftime("%B %d, %Y at %I:%M %p")
+    return formatted.replace(" 0", " ")
+
+
+async def handle_tasks_command(user_id: int):
+    """
+    Handle /tasks command - show user's tasks.
+    """
+    from api_gateway.services.database import get_user_tasks
+    
+    # Fetch user's tasks
+    tasks = await get_user_tasks(user_id)
+    
+    # Build response message
+    response = "📋 <b>Your Tasks</b>\n\n"
+    
+    # Upcoming tasks
+    if tasks['upcoming']:
+        response += f"⏰ <b>Upcoming ({len(tasks['upcoming'])})</b>\n"
+        response += "━━━━━━━━━━━━━━━━\n"
+        for task in tasks['upcoming']:
+            response += f"#{task['id']} - {task['title']}\n"
+            response += f"📅 Deadline: {format_deadline(task['deadline'])}\n"
+            response += f"👥 Group: {task['group_id']}\n\n"
+    
+    # Overdue tasks
+    if tasks['overdue']:
+        response += f"🔴 <b>Overdue ({len(tasks['overdue'])})</b>\n"
+        response += "━━━━━━━━━━━━━━━━\n"
+        for task in tasks['overdue']:
+            response += f"#{task['id']} - {task['title']}\n"
+            response += f"📅 Deadline: {format_deadline(task['deadline'])} (overdue)\n"
+            response += f"👥 Group: {task['group_id']}\n\n"
+    
+    # No tasks
+    if not tasks['upcoming'] and not tasks['overdue']:
+        response += "✅ No tasks found\n\n"
+    
+    # Usage instructions
+    response += "Use /delete &lt;id&gt; to delete a task\n"
+    response += "Use /edit &lt;id&gt; to edit deadline"
+    
+    await send_telegram_dm(user_id, response)
+
+
+async def handle_delete_command(user_id: int, message_text: str):
+    """
+    Handle /delete <task_id> command.
+    """
+    from api_gateway.services.database import delete_task
+    
+    # Parse command
+    parts = message_text.split()
+    
+    # Validate format
+    if len(parts) != 2:
+        await send_telegram_dm(
+            user_id,
+            "Usage: /delete &lt;task_id&gt;\nExample: /delete 5"
+        )
+        return
+    
+    # Validate task_id is integer
+    try:
+        task_id = int(parts[1])
+    except ValueError:
+        await send_telegram_dm(
+            user_id,
+            "❌ Invalid task ID. Must be a number."
+        )
+        return
+    
+    # Delete task (with ownership check)
+    deleted_task = await delete_task(task_id, user_id)
+    
+    if deleted_task:
+        response = f"✅ Task deleted successfully!\n\n"
+        response += f'"{deleted_task["title"]}"\n'
+        response += f"Deadline: {format_deadline(deleted_task['deadline'])}"
+        await send_telegram_dm(user_id, response)
+    else:
+        await send_telegram_dm(
+            user_id,
+            "❌ Task not found or you don't have permission to delete it."
+        )
+
+
+async def handle_edit_command(user_id: int, message_text: str):
+    """
+    Handle /edit <task_id> command - start edit flow.
+    """
+    from api_gateway.services.database import get_task_by_id
+    from api_gateway.services.redis_client import set_edit_task_state
+    
+    # Parse command
+    parts = message_text.split()
+    
+    # Validate format
+    if len(parts) != 2:
+        await send_telegram_dm(
+            user_id,
+            "Usage: /edit &lt;task_id&gt;\nExample: /edit 5"
+        )
+        return
+    
+    # Validate task_id is integer
+    try:
+        task_id = int(parts[1])
+    except ValueError:
+        await send_telegram_dm(
+            user_id,
+            "❌ Invalid task ID. Must be a number."
+        )
+        return
+    
+    # Get task (with ownership check)
+    task = await get_task_by_id(task_id)
+    
+    if not task or task['user_id'] != user_id:
+        await send_telegram_dm(
+            user_id,
+            "❌ Task not found or you don't have permission to edit it."
+        )
+        return
+    
+    # Store edit state in Redis
+    await set_edit_task_state(user_id, {
+        'task_id': task_id,
+        'task_title': task['title'],
+        'current_deadline': task['deadline'].isoformat(),
+        'group_id': task['group_id']
+    })
+    
+    # Ask for new deadline
+    response = f"📝 <b>Editing task #{task_id}</b>\n\n"
+    response += f'"{task["title"]}"\n'
+    response += f"Current deadline: {format_deadline(task['deadline'])}\n\n"
+    response += "Please send the new deadline (e.g., \"tomorrow 5pm\", \"May 15 EOD\")"
+    
+    await send_telegram_dm(user_id, response)
+
+
+async def handle_edit_reply(user_id: int, message_text: str):
+    """
+    Handle user's reply with new deadline during edit flow.
+    """
+    from api_gateway.services.redis_client import get_edit_task_state, clear_edit_task_state
+    from api_gateway.services.database import update_task_deadline
+    
+    # Get edit state
+    edit_state = await get_edit_task_state(user_id)
+    
+    if not edit_state:
+        return  # Not in edit mode
+    
+    try:
+        # Parse new deadline using LLM
+        new_deadline = await parse_deadline_from_text(message_text)
+        
+        if not new_deadline:
+            await send_telegram_dm(
+                user_id,
+                "❌ Could not understand the deadline. Please try again.\n"
+                "Example: \"tomorrow 5pm\", \"May 15 EOD\""
+            )
+            return
+        
+        # Update task
+        success = await update_task_deadline(
+            edit_state['task_id'],
+            user_id,
+            new_deadline,
+            edit_state['group_id']
+        )
+        
+        if success:
+            response = f"✅ Task updated successfully!\n\n"
+            response += f"New deadline: {format_deadline(new_deadline)}"
+            await send_telegram_dm(user_id, response)
+        else:
+            await send_telegram_dm(
+                user_id,
+                "❌ Failed to update task. Please try again."
+            )
+    
+    except Exception as e:
+        print(f"[EDIT] Error parsing deadline: {e}")
+        await send_telegram_dm(
+            user_id,
+            "❌ Error processing deadline. Please try again."
+        )
+    
+    finally:
+        # Clear edit state
+        await clear_edit_task_state(user_id)
+
+
+async def parse_deadline_from_text(text: str):
+    """
+    Parse deadline from natural language text using LLM.
+    
+    Args:
+        text: Natural language deadline (e.g., "tomorrow 5pm", "May 15 EOD")
+        
+    Returns:
+        UTC datetime object or None if parsing fails
+    """
+    from api_gateway.core.llm import call_llm
+    from datetime import datetime, timezone, timedelta
+    import json
+    
+    # Get current date in IST for context
+    ist_tz = timezone(timedelta(hours=5, minutes=30))
+    now_ist = datetime.now(ist_tz)
+    current_date_str = now_ist.strftime("%Y-%m-%d")
+    current_time_str = now_ist.strftime("%H:%M")
+    
+    prompt = f"""Extract the deadline from this text and return it in ISO 8601 format (YYYY-MM-DDTHH:MM:SS).
+
+Current date: {current_date_str}
+Current time: {current_time_str}
+Timezone: IST (India Standard Time, UTC+5:30)
+
+Text: "{text}"
+
+TIME INTERPRETATION RULES:
+- "EOD" (End of Day) = 23:59:59 (11:59 PM)
+- "COB" (Close of Business) = 17:00:00 (5 PM)
+- "by today" = 23:59:59 today
+- "by tonight" = 23:59:59 today
+- "midnight" = 23:59:59 (NOT 00:00:00)
+- If no time specified, use 23:59:59
+
+Return ONLY the datetime in format: YYYY-MM-DDTHH:MM:SS
+Example: 2026-05-15T17:00:00
+
+If you cannot extract a deadline, return: NONE"""
+    
+    try:
+        response = await call_llm(prompt)
+        response = response.strip()
+        
+        if response == "NONE" or not response:
+            return None
+        
+        # Parse the datetime
+        deadline_ist = datetime.fromisoformat(response)
+        
+        # Add IST timezone if not present
+        if deadline_ist.tzinfo is None:
+            deadline_ist = deadline_ist.replace(tzinfo=ist_tz)
+        
+        # Convert to UTC
+        deadline_utc = deadline_ist.astimezone(timezone.utc)
+        
+        return deadline_utc
+        
+    except Exception as e:
+        print(f"[LLM] Error parsing deadline: {e}")
+        return None

@@ -53,3 +53,21 @@ def get_current_ist_time() -> str:
 def get_current_year() -> int:
     """Get current year in IST timezone."""
     return datetime.now(IST_TZ).year
+
+
+def format_deadline_ist(deadline) -> str:
+    """
+    Format deadline in user-friendly IST format.
+    
+    Args:
+        deadline: UTC datetime object
+        
+    Returns:
+        Formatted string like "May 12, 2026 at 5:30 PM"
+    """
+    # Convert to IST
+    deadline_ist = deadline.astimezone(IST_TZ)
+    
+    # Format and remove leading zero from hour
+    formatted = deadline_ist.strftime("%B %d, %Y at %I:%M %p")
+    return formatted.replace(" 0", " ")

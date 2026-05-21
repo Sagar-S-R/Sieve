@@ -135,3 +135,125 @@ async def send_dm(
     )
     
     raise TelegramClientError(error_message)
+
+
+async def send_telegram_message(
+    chat_id: int,
+    text: str,
+    parse_mode: str = "HTML",
+    max_retries: Optional[int] = None,
+    retry_delay: Optional[int] = None
+) -> dict:
+    """
+    Send a message to a Telegram chat (group or user).
+    
+    Args:
+        chat_id: The Telegram chat ID (group or user)
+        text: The message text to send
+        parse_mode: Parse mode (HTML or Markdown)
+        max_retries: Maximum number of retry attempts
+        retry_delay: Delay in seconds between retries
+    
+    Returns:
+        dict: The response from the Telegram API
+    
+    Raises:
+        TelegramClientError: If the message fails to send after all retries
+    """
+    if max_retries is None:
+        max_retries = settings.TELEGRAM_MAX_RETRIES
+    if retry_delay is None:
+        retry_delay = settings.TELEGRAM_RETRY_DELAY
+    
+    url = f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": parse_mode
+    }
+    
+    last_error = None
+    
+    for attempt in range(max_retries):
+        try:
+            logger.info(
+                "Sending Telegram message",
+                extra={
+                    "chat_id": chat_id,
+                    "attempt": attempt + 1,
+                    "max_retries": max_retries
+                }
+            )
+            
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.post(url, json=payload)
+                response.raise_for_status()
+                
+                result = response.json()
+                
+                if not result.get("ok"):
+                    error_description = result.get("description", "Unknown error")
+                    raise TelegramClientError(
+                        f"Telegram API returned error: {error_description}"
+                    )
+                
+                logger.info(
+                    "Telegram message sent successfully",
+                    extra={
+                        "chat_id": chat_id,
+                        "message_id": result.get("result", {}).get("message_id")
+                    }
+                )
+                
+                return result
+                
+        except httpx.HTTPStatusError as e:
+            last_error = e
+            error_msg = f"HTTP error {e.response.status_code}: {e.response.text}"
+            logger.warning(
+                "Telegram API HTTP error",
+                extra={
+                    "chat_id": chat_id,
+                    "attempt": attempt + 1,
+                    "error": error_msg
+                }
+            )
+            
+        except httpx.RequestError as e:
+            last_error = e
+            logger.warning(
+                "Telegram API request error",
+                extra={
+                    "chat_id": chat_id,
+                    "attempt": attempt + 1,
+                    "error": str(e)
+                }
+            )
+            
+        except TelegramClientError as e:
+            last_error = e
+            logger.warning(
+                "Telegram API error",
+                extra={
+                    "chat_id": chat_id,
+                    "attempt": attempt + 1,
+                    "error": str(e)
+                }
+            )
+        
+        # Wait before retrying (except on last attempt)
+        if attempt < max_retries - 1:
+            await asyncio.sleep(retry_delay)
+    
+    # All retries exhausted
+    error_message = f"Failed to send Telegram message after {max_retries} attempts: {last_error}"
+    logger.error(
+        "Telegram message sending failed",
+        extra={
+            "chat_id": chat_id,
+            "max_retries": max_retries,
+            "last_error": str(last_error)
+        }
+    )
+    
+    raise TelegramClientError(error_message)

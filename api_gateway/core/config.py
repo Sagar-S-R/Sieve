@@ -6,6 +6,7 @@ class Settings(BaseSettings):
     RABBITMQ_URL: str
     REDIS_URL: str
     DATABASE_URL: str
+    GROQ_API_KEY: str
 
     class Config:
         env_file = ".env"

@@ -96,8 +96,45 @@ def process_message(ch, method, properties, body):
         if result.get("needs_human"):
             logger.info(f"[!] HITL triggered for user {result.get('user_id')}")
         elif result.get("intent") == "NEW" and not result.get("needs_human"):
-            # Save task
-            extracted_data = result.get('extracted_data')
+            # Check if this is a group update (correction message)
+            if result.get('is_update') and result.get('updating_task_title'):
+                # This is a correction message - update existing tasks
+                logger.info(f"[UPDATE] Detected correction for task: {result.get('updating_task_title')}")
+                
+                extracted_data = result.get('extracted_data')
+                group_id = result.get('group_id')
+                
+                if extracted_data and group_id:
+                    from workers.text_extractor.services.database import update_tasks_by_title_and_group
+                    from workers.text_extractor.core.timezone_utils import format_deadline_ist
+                    from workers.text_extractor.services.telegram_client import send_telegram_message
+                    
+                    # Update all subscribers' tasks
+                    updated_count = asyncio.run(update_tasks_by_title_and_group(
+                        group_id=group_id,
+                        title=result.get('updating_task_title'),
+                        new_deadline=extracted_data.deadline
+                    ))
+                    
+                    logger.info(f"[UPDATE] Updated {updated_count} tasks")
+                    
+                    # Send confirmation to group
+                    if updated_count > 0:
+                        response = f"✅ Updated deadline for \"{result.get('updating_task_title')}\"\n"
+                        response += f"New deadline: {format_deadline_ist(extracted_data.deadline)}\n"
+                        response += f"📊 Updated for {updated_count} subscriber(s)"
+                        
+                        asyncio.run(send_telegram_message(group_id, response))
+                        logger.info(f"[UPDATE] Confirmation sent to group")
+                    else:
+                        logger.warning(f"[UPDATE] No tasks found to update, proceeding with normal flow")
+                        # Fall through to normal task creation
+                        result['is_update'] = False
+            
+            # Normal task creation (if not an update, or update found no tasks)
+            if not result.get('is_update'):
+                # Save task
+                extracted_data = result.get('extracted_data')
             group_id = result.get('group_id')
             message_sender_id = result.get('user_id')
             

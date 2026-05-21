@@ -172,3 +172,84 @@ async def invalidate_user_subs_cache(user_id: int):
         print(f"[CACHE INVALIDATE] user_subs:{user_id}")
     except Exception as e:
         print(f"[CACHE ERROR] Failed to invalidate user_subs:{user_id}: {e}")
+
+
+# ============================================================================
+# EDIT STATE MANAGEMENT
+# ============================================================================
+
+async def set_edit_task_state(user_id: int, task_data: dict, ttl_seconds: int = 300):
+    """
+    Store edit task state for user.
+    
+    Args:
+        user_id: Telegram user ID
+        task_data: Dict with task_id, task_title, current_deadline, group_id
+        ttl_seconds: Time to live (default 5 minutes)
+    """
+    try:
+        client = await get_redis_client()
+        key = f"edit_task:{user_id}"
+        await client.setex(key, ttl_seconds, json.dumps(task_data))
+        print(f"[REDIS] Set edit state for user {user_id}")
+    except Exception as e:
+        print(f"[REDIS ERROR] Failed to set edit state for user {user_id}: {e}")
+
+
+async def get_edit_task_state(user_id: int) -> Optional[dict]:
+    """
+    Get edit task state for user.
+    
+    Args:
+        user_id: Telegram user ID
+        
+    Returns:
+        Task data dict if in edit mode, None otherwise
+    """
+    try:
+        client = await get_redis_client()
+        key = f"edit_task:{user_id}"
+        data = await client.get(key)
+        return json.loads(data) if data else None
+    except Exception as e:
+        print(f"[REDIS ERROR] Failed to get edit state for user {user_id}: {e}")
+        return None
+
+
+async def clear_edit_task_state(user_id: int):
+    """
+    Clear edit task state for user.
+    
+    Args:
+        user_id: Telegram user ID
+    """
+    try:
+        client = await get_redis_client()
+        key = f"edit_task:{user_id}"
+        await client.delete(key)
+        print(f"[REDIS] Cleared edit state for user {user_id}")
+    except Exception as e:
+        print(f"[REDIS ERROR] Failed to clear edit state for user {user_id}: {e}")
+
+
+async def invalidate_recent_tasks_cache_async(group_id: int):
+    """
+    Invalidate recent_tasks cache for a group (async version).
+    
+    Args:
+        group_id: The Telegram group ID
+    """
+    try:
+        client = await get_redis_client()
+        pattern = f"cache:recent_tasks:{group_id}:*"
+        
+        # Scan for keys matching pattern
+        keys = []
+        async for key in client.scan_iter(match=pattern):
+            keys.append(key)
+        
+        if keys:
+            await client.delete(*keys)
+            print(f"[CACHE INVALIDATE] recent_tasks:{group_id}:* ({len(keys)} keys)")
+    except Exception as e:
+        print(f"[CACHE ERROR] Failed to invalidate recent_tasks:{group_id}: {e}")
