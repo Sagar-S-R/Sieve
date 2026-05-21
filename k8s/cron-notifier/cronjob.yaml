@@ -1,0 +1,40 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: cron-notifier
+  namespace: sieve
+spec:
+  schedule: "*/5 * * * *"  # Every 5 minutes
+  concurrencyPolicy: Forbid  # Don't run multiple instances
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: cron-notifier
+        spec:
+          restartPolicy: OnFailure
+          containers:
+          - name: cron-notifier
+            image: sieve/cron-notifier:latest  # TODO: Replace with your registry
+            imagePullPolicy: Always
+            env:
+            - name: TELEGRAM_BOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: sieve-secrets
+                  key: telegram-bot-token
+            - name: DATABASE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: sieve-config
+                  key: DATABASE_URL
+            resources:
+              requests:
+                memory: "128Mi"
+                cpu: "100m"
+              limits:
+                memory: "256Mi"
+                cpu: "200m"

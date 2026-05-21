@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: media-extractor
+  namespace: sieve
+  labels:
+    app: media-extractor
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: media-extractor
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: media-extractor
+    spec:
+      containers:
+      - name: media-extractor
+        image: sieve/media-extractor:latest  # TODO: Replace with your registry
+        imagePullPolicy: Always
+        env:
+        - name: GOOGLE_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: sieve-secrets
+              key: google-api-key
+        - name: TELEGRAM_BOT_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: sieve-secrets
+              key: telegram-bot-token
+        - name: RABBITMQ_URL
+          valueFrom:
+            configMapKeyRef:
+              name: sieve-config
+              key: RABBITMQ_URL
+        - name: REDIS_URL
+          valueFrom:
+            configMapKeyRef:
+              name: sieve-config
+              key: REDIS_URL
+        - name: DATABASE_URL
+          valueFrom:
+            configMapKeyRef:
+              name: sieve-config
+              key: DATABASE_URL
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"

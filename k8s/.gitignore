@@ -1,0 +1,14 @@
+# Kubernetes Secrets
+secrets.yaml
+
+# Ignore any files with actual credentials
+*-secrets.yaml
+*.secret.yaml
+
+# Ignore local kubectl config
+kubeconfig
+*.kubeconfig
+
+# Ignore Helm values with secrets
+values-prod.yaml
+values-staging.yaml

@@ -1,0 +1,88 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: text-extractor
+  namespace: sieve
+  labels:
+    app: text-extractor
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: text-extractor
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: text-extractor
+    spec:
+      containers:
+      - name: text-extractor
+        image: sieve/text-extractor:latest  # TODO: Replace with your registry
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8001
+          name: metrics
+        env:
+        - name: GROQ_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: sieve-secrets
+              key: groq-api-key
+        - name: TELEGRAM_BOT_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: sieve-secrets
+              key: telegram-bot-token
+        - name: RABBITMQ_URL
+          valueFrom:
+            configMapKeyRef:
+              name: sieve-config
+              key: RABBITMQ_URL
+        - name: REDIS_URL
+          valueFrom:
+            configMapKeyRef:
+              name: sieve-config
+              key: REDIS_URL
+        - name: DATABASE_URL
+          valueFrom:
+            configMapKeyRef:
+              name: sieve-config
+              key: DATABASE_URL
+        - name: PROMETHEUS_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: sieve-config
+              key: PROMETHEUS_PORT
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: sieve-config
+              key: LOG_LEVEL
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /metrics
+            port: 8001
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /metrics
+            port: 8001
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 2

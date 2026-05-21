@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sieve-config
+  namespace: sieve
+data:
+  # Database
+  DATABASE_URL: "postgresql://user:password@postgres:5432/sieve"
+  
+  # RabbitMQ
+  RABBITMQ_URL: "amqp://guest:guest@rabbitmq:5672/"
+  
+  # Redis
+  REDIS_URL: "redis://redis:6379/0"
+  
+  # Prometheus
+  PROMETHEUS_PORT: "8001"
+  
+  # Logging
+  LOG_LEVEL: "INFO"
