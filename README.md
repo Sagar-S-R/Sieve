@@ -1,6 +1,6 @@
-# Sieve - AI-Powered Telegram Task Assistant
+# Sieve - AI-Powered Task Assistant
 
-**Sieve** is an enterprise-grade, distributed AI system that autonomously monitors Telegram group chats, extracts tasks and deadlines using Google Gemini, and sends intelligent private reminders.
+**Sieve** is an distributed AI system that autonomously monitors Telegram group chats, extracts tasks and deadlines using Google Gemini, and sends intelligent private reminders.
 
 ## Architecture
 
@@ -328,27 +328,10 @@ docker exec -it sieve_postgres psql -U user -d sieve -c \
   "SELECT * FROM tasks WHERE deadline <= NOW() AND is_sent = FALSE;"
 ```
 
-## TODO
-
-- [ ] Add Telegram webhook signature validation
-- [ ] Add rate limiting to API Gateway
-- [ ] Add Prometheus metrics
-- [ ] Add unit tests
-- [ ] Add integration tests
-- [ ] Add admin dashboard
-- [ ] Add user preferences (notification times)
-- [ ] Add task editing/deletion
-- [ ] Add recurring tasks
-- [ ] Add task categories/tags
-
 ## License
 
 MIT
 
-## Contributors
-
-Built with care by the Sieve team
-
 ---
 
-**Note:** This is a production-ready system. All workers are lean, async, and horizontally scalable. No over-engineering - just functional, pragmatic code.
+**Note:** This is a production-ready system. All workers are lean, async, and horizontally scalable. 
