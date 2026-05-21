@@ -12,7 +12,20 @@ async def get_db_connection():
 
 
 async def fetch_recent_tasks(group_id: int, limit: int = 10):
-    """Fetch recent tasks from database."""
+    """Fetch recent tasks from database with caching."""
+    from workers.text_extractor.services.redis_client import (
+        get_cached_recent_tasks,
+        set_cached_recent_tasks
+    )
+    
+    # Try cache first
+    cached = get_cached_recent_tasks(group_id, limit)
+    if cached is not None:
+        logger.info(f"[CACHE HIT] recent_tasks:{group_id}:{limit} ({len(cached)} tasks)")
+        return cached
+    
+    # Cache miss - query database
+    logger.info(f"[CACHE MISS] recent_tasks:{group_id}:{limit}")
     start_time = time.time()
     try:
         conn = await get_db_connection()
@@ -30,6 +43,10 @@ async def fetch_recent_tasks(group_id: int, limit: int = 10):
             )
             result = [dict(row) for row in rows]
             logger.info(f"[DB] Fetched {len(result)} recent tasks for group {group_id}")
+            
+            # Store in cache
+            set_cached_recent_tasks(group_id, limit, result)
+            
             return result
         finally:
             await conn.close()
@@ -81,7 +98,7 @@ async def save_task(task_data: dict):
 
 async def get_group_subscribers(group_id: int) -> list:
     """
-    Get all subscribers for a group.
+    Get all subscribers for a group with caching.
     
     Args:
         group_id: The Telegram group ID
@@ -89,6 +106,19 @@ async def get_group_subscribers(group_id: int) -> list:
     Returns:
         List of subscriber IDs
     """
+    from workers.text_extractor.services.redis_client import (
+        get_cached_subscribers,
+        set_cached_subscribers
+    )
+    
+    # Try cache first
+    cached = get_cached_subscribers(group_id)
+    if cached is not None:
+        logger.info(f"[CACHE HIT] subscribers:{group_id} ({len(cached)} subscribers)")
+        return cached
+    
+    # Cache miss - query database
+    logger.info(f"[CACHE MISS] subscribers:{group_id}")
     try:
         conn = await get_db_connection()
         try:
@@ -101,7 +131,13 @@ async def get_group_subscribers(group_id: int) -> list:
                 """,
                 group_id
             )
-            return [row['subscriber_id'] for row in rows]
+            subscribers = [row['subscriber_id'] for row in rows]
+            logger.info(f"[DB] Fetched {len(subscribers)} subscribers for group {group_id}")
+            
+            # Store in cache
+            set_cached_subscribers(group_id, subscribers)
+            
+            return subscribers
         finally:
             await conn.close()
     except Exception as e:
@@ -125,6 +161,8 @@ async def save_tasks_atomic(subscribers: list, group_id: int, message_sender_id:
     Returns:
         List of created task IDs
     """
+    from workers.text_extractor.services.redis_client import invalidate_recent_tasks_cache
+    
     start_time = time.time()
     try:
         conn = await get_db_connection()
@@ -156,6 +194,10 @@ async def save_tasks_atomic(subscribers: list, group_id: int, message_sender_id:
                     logger.info(f"[DB] Task {task_id} saved for subscriber {subscriber_id}")
             
             logger.info(f"[DB] Transaction complete: {len(task_ids)} tasks created")
+            
+            # Invalidate recent_tasks cache after successful save
+            invalidate_recent_tasks_cache(group_id)
+            
             return task_ids
             
         finally:

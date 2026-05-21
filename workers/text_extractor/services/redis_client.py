@@ -58,3 +58,150 @@ def mark_message_processed(message_id: int, group_id: int, ttl_seconds: int = 36
     """
     key = f"processed:{group_id}:{message_id}"
     redis_client.setex(key, ttl_seconds, "1")
+
+
+# ============================================================================
+# CACHING FUNCTIONS
+# ============================================================================
+
+def get_cached_subscribers(group_id: int) -> list | None:
+    """
+    Get subscriber list from cache.
+    
+    Args:
+        group_id: The Telegram group ID
+        
+    Returns:
+        List of subscriber IDs if cached, None on cache miss or error
+    """
+    try:
+        key = f"cache:subscribers:{group_id}"
+        data = redis_client.get(key)
+        if data:
+            return json.loads(data)
+        return None
+    except (redis.ConnectionError, redis.TimeoutError) as e:
+        print(f"[CACHE ERROR] Redis connection failed for subscribers:{group_id}: {e}")
+        return None
+    except (json.JSONDecodeError, TypeError, ValueError) as e:
+        print(f"[CACHE ERROR] Deserialization failed for subscribers:{group_id}: {e}")
+        return None
+
+
+def set_cached_subscribers(group_id: int, subscribers: list, ttl_seconds: int = 600):
+    """
+    Store subscriber list in cache.
+    
+    Args:
+        group_id: The Telegram group ID
+        subscribers: List of subscriber IDs
+        ttl_seconds: Time to live (default 10 minutes)
+    """
+    try:
+        key = f"cache:subscribers:{group_id}"
+        redis_client.setex(key, ttl_seconds, json.dumps(subscribers))
+    except (redis.ConnectionError, redis.TimeoutError) as e:
+        print(f"[CACHE ERROR] Redis connection failed when caching subscribers:{group_id}: {e}")
+    except (TypeError, ValueError) as e:
+        print(f"[CACHE ERROR] Serialization failed for subscribers:{group_id}: {e}")
+
+
+def get_cached_recent_tasks(group_id: int, limit: int = 10) -> list | None:
+    """
+    Get recent tasks from cache.
+    
+    Args:
+        group_id: The Telegram group ID
+        limit: Number of tasks to retrieve
+        
+    Returns:
+        List of task dicts if cached, None on cache miss or error
+    """
+    try:
+        key = f"cache:recent_tasks:{group_id}:{limit}"
+        data = redis_client.get(key)
+        if data:
+            return json.loads(data)
+        return None
+    except (redis.ConnectionError, redis.TimeoutError) as e:
+        print(f"[CACHE ERROR] Redis connection failed for recent_tasks:{group_id}:{limit}: {e}")
+        return None
+    except (json.JSONDecodeError, TypeError, ValueError) as e:
+        print(f"[CACHE ERROR] Deserialization failed for recent_tasks:{group_id}:{limit}: {e}")
+        return None
+
+
+def set_cached_recent_tasks(group_id: int, limit: int, tasks: list, ttl_seconds: int = 300):
+    """
+    Store recent tasks in cache.
+    
+    Args:
+        group_id: The Telegram group ID
+        limit: Number of tasks
+        tasks: List of task dicts
+        ttl_seconds: Time to live (default 5 minutes)
+    """
+    try:
+        key = f"cache:recent_tasks:{group_id}:{limit}"
+        # Convert datetime objects to ISO strings for JSON serialization
+        serializable_tasks = []
+        for task in tasks:
+            task_copy = dict(task)
+            for key_name, value in task_copy.items():
+                if hasattr(value, 'isoformat'):
+                    task_copy[key_name] = value.isoformat()
+            serializable_tasks.append(task_copy)
+        
+        redis_client.setex(key, ttl_seconds, json.dumps(serializable_tasks))
+    except (redis.ConnectionError, redis.TimeoutError) as e:
+        print(f"[CACHE ERROR] Redis connection failed when caching recent_tasks:{group_id}:{limit}: {e}")
+    except (TypeError, ValueError) as e:
+        print(f"[CACHE ERROR] Serialization failed for recent_tasks:{group_id}:{limit}: {e}")
+
+
+def invalidate_subscribers_cache(group_id: int):
+    """
+    Invalidate (delete) subscriber cache for a group.
+    
+    Args:
+        group_id: The Telegram group ID
+    """
+    try:
+        key = f"cache:subscribers:{group_id}"
+        redis_client.delete(key)
+        print(f"[CACHE INVALIDATE] subscribers:{group_id}")
+    except (redis.ConnectionError, redis.TimeoutError) as e:
+        print(f"[CACHE ERROR] Redis connection failed when invalidating subscribers:{group_id}: {e}")
+
+
+def invalidate_recent_tasks_cache(group_id: int):
+    """
+    Invalidate (delete) all recent_tasks cache keys for a group.
+    Uses pattern matching to delete all limits.
+    
+    Args:
+        group_id: The Telegram group ID
+    """
+    try:
+        pattern = f"cache:recent_tasks:{group_id}:*"
+        keys = redis_client.keys(pattern)
+        if keys:
+            redis_client.delete(*keys)
+            print(f"[CACHE INVALIDATE] recent_tasks:{group_id}:* ({len(keys)} keys)")
+    except (redis.ConnectionError, redis.TimeoutError) as e:
+        print(f"[CACHE ERROR] Redis connection failed when invalidating recent_tasks:{group_id}: {e}")
+
+
+def invalidate_user_subs_cache(user_id: int):
+    """
+    Invalidate (delete) user subscriptions cache.
+    
+    Args:
+        user_id: The Telegram user ID
+    """
+    try:
+        key = f"cache:user_subs:{user_id}"
+        redis_client.delete(key)
+        print(f"[CACHE INVALIDATE] user_subs:{user_id}")
+    except (redis.ConnectionError, redis.TimeoutError) as e:
+        print(f"[CACHE ERROR] Redis connection failed when invalidating user_subs:{user_id}: {e}")

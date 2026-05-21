@@ -61,6 +61,11 @@ async def subscribe_to_group(group_id: int, subscriber_id: int) -> bool:
     Returns:
         True if subscribed (new or existing), False on error
     """
+    from api_gateway.services.redis_client import (
+        invalidate_subscribers_cache,
+        invalidate_user_subs_cache
+    )
+    
     pool = await get_pool()
     
     query = """
@@ -73,6 +78,11 @@ async def subscribe_to_group(group_id: int, subscriber_id: int) -> bool:
     try:
         async with pool.acquire() as conn:
             result = await conn.fetchval(query, group_id, subscriber_id)
+            
+            # Invalidate caches
+            await invalidate_subscribers_cache(group_id)
+            await invalidate_user_subs_cache(subscriber_id)
+            
             return True  # Success (new or already exists)
     except Exception as e:
         print(f"[DB] Error subscribing user {subscriber_id} to group {group_id}: {e}")
@@ -90,6 +100,11 @@ async def unsubscribe_from_group(group_id: int, subscriber_id: int) -> bool:
     Returns:
         True if unsubscribed, False if wasn't subscribed
     """
+    from api_gateway.services.redis_client import (
+        invalidate_subscribers_cache,
+        invalidate_user_subs_cache
+    )
+    
     pool = await get_pool()
     
     query = """
@@ -101,6 +116,12 @@ async def unsubscribe_from_group(group_id: int, subscriber_id: int) -> bool:
     try:
         async with pool.acquire() as conn:
             result = await conn.fetchval(query, group_id, subscriber_id)
+            
+            if result is not None:
+                # Invalidate caches
+                await invalidate_subscribers_cache(group_id)
+                await invalidate_user_subs_cache(subscriber_id)
+            
             return result is not None
     except Exception as e:
         print(f"[DB] Error unsubscribing user {subscriber_id} from group {group_id}: {e}")
@@ -109,7 +130,7 @@ async def unsubscribe_from_group(group_id: int, subscriber_id: int) -> bool:
 
 async def get_group_subscribers(group_id: int) -> list:
     """
-    Get all subscribers for a group.
+    Get all subscribers for a group with caching.
     
     Args:
         group_id: The Telegram group ID
@@ -117,6 +138,19 @@ async def get_group_subscribers(group_id: int) -> list:
     Returns:
         List of subscriber IDs
     """
+    from api_gateway.services.redis_client import (
+        get_cached_subscribers,
+        set_cached_subscribers
+    )
+    
+    # Try cache first
+    cached = await get_cached_subscribers(group_id)
+    if cached is not None:
+        print(f"[CACHE HIT] subscribers:{group_id} ({len(cached)} subscribers)")
+        return cached
+    
+    # Cache miss - query database
+    print(f"[CACHE MISS] subscribers:{group_id}")
     pool = await get_pool()
     
     query = """
@@ -129,7 +163,13 @@ async def get_group_subscribers(group_id: int) -> list:
     try:
         async with pool.acquire() as conn:
             rows = await conn.fetch(query, group_id)
-            return [row['subscriber_id'] for row in rows]
+            subscribers = [row['subscriber_id'] for row in rows]
+            print(f"[DB] Fetched {len(subscribers)} subscribers for group {group_id}")
+            
+            # Store in cache
+            await set_cached_subscribers(group_id, subscribers)
+            
+            return subscribers
     except Exception as e:
         print(f"[DB] Error fetching subscribers for group {group_id}: {e}")
         return []
@@ -186,7 +226,7 @@ async def get_user_available_groups(user_id: int) -> list:
 
 async def get_user_subscriptions(user_id: int) -> list:
     """
-    Get all groups the user is subscribed to.
+    Get all groups the user is subscribed to with caching.
     
     Args:
         user_id: The Telegram user ID
@@ -194,6 +234,19 @@ async def get_user_subscriptions(user_id: int) -> list:
     Returns:
         List of dicts with group_id, subscribed_at
     """
+    from api_gateway.services.redis_client import (
+        get_cached_user_subs,
+        set_cached_user_subs
+    )
+    
+    # Try cache first
+    cached = await get_cached_user_subs(user_id)
+    if cached is not None:
+        print(f"[CACHE HIT] user_subs:{user_id} ({len(cached)} subscriptions)")
+        return cached
+    
+    # Cache miss - query database
+    print(f"[CACHE MISS] user_subs:{user_id}")
     pool = await get_pool()
     
     query = """
@@ -206,13 +259,19 @@ async def get_user_subscriptions(user_id: int) -> list:
     try:
         async with pool.acquire() as conn:
             rows = await conn.fetch(query, user_id)
-            return [
+            subs = [
                 {
                     'group_id': row['group_id'],
                     'subscribed_at': row['subscribed_at']
                 }
                 for row in rows
             ]
+            print(f"[DB] Fetched {len(subs)} subscriptions for user {user_id}")
+            
+            # Store in cache
+            await set_cached_user_subs(user_id, subs)
+            
+            return subs
     except Exception as e:
         print(f"[DB] Error fetching subscriptions for user {user_id}: {e}")
         return []
