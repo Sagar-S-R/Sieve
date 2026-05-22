@@ -37,13 +37,20 @@ export default function Page() {
       </header>
 
       <main className="relative px-6 md:px-12 lg:px-24 pt-32">
-        {/* Continuous gradient blob in top right corner */}
-        <div
-          className="fixed right-0 top-0 h-[600px] w-[600px] rounded-full bg-gradient-to-br from-blue-400 via-cyan-300 to-green-300 opacity-40 blur-3xl pointer-events-none"
-          style={{
-            animation: 'blobFloat 20s ease-in-out infinite'
-          }}
-        />
+        {/* Large background logo with gradient overlay */}
+        <div className="fixed right-0 top-0 h-[600px] w-[600px] pointer-events-none">
+          {/* Gradient blob */}
+          <div
+            className="absolute inset-0 rounded-full bg-gradient-to-br from-blue-400 via-cyan-300 to-green-300 opacity-40 blur-3xl"
+            style={{
+              animation: 'blobFloat 20s ease-in-out infinite'
+            }}
+          />
+          {/* Large logo watermark */}
+          <div className="absolute inset-0 flex items-center justify-center opacity-10">
+            <img src="/image.png" alt="" className="w-[400px] h-[400px] object-contain" />
+          </div>
+        </div>
 
         {/* Hero Section */}
         <section className="relative pb-32 min-h-[90vh] flex flex-col justify-center max-w-7xl mx-auto">
@@ -62,20 +69,20 @@ export default function Page() {
             and sends you personal reminders—so you can focus on what matters.
           </p>
 
-          <div className="mt-12 flex gap-4 animate-fade-in-delay-3">
-            <a href="https://t.me/sieve7_bot" target="_blank" rel="noopener noreferrer">
-              <Button className="rounded-full border-2 bg-blue-600 border-blue-600 px-10 py-6 text-base text-white hover:bg-blue-700 hover:border-blue-700 hover:scale-105 transition-all duration-300 font-medium">
+          <div className="mt-12 flex flex-col sm:flex-row gap-4 animate-fade-in-delay-3">
+            <a href="https://t.me/sieve7_bot" target="_blank" rel="noopener noreferrer" className="w-full sm:w-auto">
+              <Button className="w-full sm:w-auto rounded-full border-2 bg-blue-600 border-blue-600 px-10 py-6 text-base text-white hover:bg-blue-700 hover:border-blue-700 hover:scale-105 transition-all duration-300 font-medium">
                 Try Sieve Bot
               </Button>
             </a>
-            <a href="#how-it-works">
-              <Button variant="outline" className="rounded-full border-2 border-blue-600 text-blue-600 px-10 py-6 text-base hover:bg-blue-600 hover:text-white transition-all duration-300 font-medium">
+            <a href="#how-it-works" className="w-full sm:w-auto">
+              <Button variant="outline" className="w-full sm:w-auto rounded-full border-2 border-blue-600 text-blue-600 px-10 py-6 text-base hover:bg-blue-600 hover:text-white transition-all duration-300 font-medium">
                 See How It Works
               </Button>
             </a>
           </div>
 
-          <div className="mt-12 flex gap-10 text-sm text-gray-600 tracking-wide font-medium">
+          <div className="mt-12 flex flex-col sm:flex-row gap-4 sm:gap-10 text-sm text-gray-600 tracking-wide font-medium">
             <span className="flex items-center gap-2">
               <span className="h-1.5 w-1.5 rounded-full bg-blue-600"></span>
               Free Forever
