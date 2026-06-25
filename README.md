@@ -4,40 +4,51 @@
 
 ## Architecture
 
-```
-
-                        Telegram Bot                              
-
-                                             
-                                             
-                  
-      API Gateway                   API Gateway   
-      (FastAPI)                     (FastAPI)     
-      Zero-Cost                     HITL          
-      Triage                        Intercept     
-                  
-                                             
-                                             
-                  
-       RabbitMQ                        Redis      
-     fast_text_queue                HITL Locks    
-    heavy_media_queue             
+```mermaid
+graph TD
+    TG["📱 Telegram Users"]
+    AG["🚀 API Gateway<br/>FastAPI"]
+    TRIAGE["🔍 Zero-Cost Triage<br/>Keyword Filter"]
     
-             
-             
-                                         
-        
-       text_         media_        cron_    
-     extractor     extractor     notifier   
-     LangGraph     LangGraph     (60s loop) 
-        
-                                        
-          
-                          
-                 
-                    PostgreSQL   
-                    tasks table  
-                 
+    RMQ["🐰 RabbitMQ<br/>Message Queue"]
+    REDIS["⚡ Redis<br/>Caching & HITL Locks"]
+    
+    TE["📝 Text Extractor<br/>LangGraph"]
+    ME["🖼️ Media Extractor<br/>Vision + OCR"]
+    CN["⏰ Cron Notifier<br/>60s Loop"]
+    
+    DB["🗄️ PostgreSQL<br/>Task Storage"]
+    TELEOUT["💬 Telegram DMs<br/>Reminders"]
+    
+    TG -->|Webhook| AG
+    AG --> TRIAGE
+    TRIAGE -->|Text| RMQ
+    TRIAGE -->|Media| RMQ
+    TRIAGE -->|HITL Query| REDIS
+    
+    RMQ -->|fast_text_queue| TE
+    RMQ -->|heavy_media_queue| ME
+    
+    TE --> DB
+    ME --> DB
+    
+    REDIS -->|State Management| TE
+    REDIS -->|State Management| ME
+    
+    DB -->|Poll Deadlines| CN
+    CN -->|Send Reminders| TELEOUT
+    TELEOUT -->|User Reply| AG
+    
+    style TG fill:#2563eb,color:#fff
+    style AG fill:#2563eb,color:#fff
+    style TRIAGE fill:#16a34a,color:#fff
+    style RMQ fill:#dc2626,color:#fff
+    style REDIS fill:#7c3aed,color:#fff
+    style TE fill:#0891b2,color:#fff
+    style ME fill:#0891b2,color:#fff
+    style CN fill:#ea580c,color:#fff
+    style DB fill:#2563eb,color:#fff
+    style TELEOUT fill:#16a34a,color:#fff
 ```
 
 ## Features

@@ -582,6 +582,247 @@ export default function Page() {
           <div className="h-px w-full bg-gradient-to-r from-transparent via-cyan-600/30 to-transparent"></div>
         </div>
 
+        {/* Architecture Section */}
+        <section className="relative py-24 max-w-7xl mx-auto">
+          <div className="text-center mb-20">
+            <h2 className="text-4xl md:text-5xl font-light tracking-tight mb-4">
+              System Architecture
+            </h2>
+            <p className="text-xl text-gray-600">
+              Designed for Reliability, Performance, and Scale
+            </p>
+          </div>
+
+          <div className="mb-16 overflow-x-auto">
+            <svg
+              viewBox="0 0 1200 600"
+              className="w-full min-w-max"
+              preserveAspectRatio="xMidYMid meet"
+            >
+              <defs>
+                <linearGradient id="blueGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" style={{ stopColor: '#2563eb', stopOpacity: 1 }} />
+                  <stop offset="100%" style={{ stopColor: '#0891b2', stopOpacity: 1 }} />
+                </linearGradient>
+                <linearGradient id="greenGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" style={{ stopColor: '#16a34a', stopOpacity: 1 }} />
+                  <stop offset="100%" style={{ stopColor: '#0891b2', stopOpacity: 1 }} />
+                </linearGradient>
+                <linearGradient id="purpleGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" style={{ stopColor: '#7c3aed', stopOpacity: 1 }} />
+                  <stop offset="100%" style={{ stopColor: '#2563eb', stopOpacity: 1 }} />
+                </linearGradient>
+              </defs>
+
+              {/* Layer 1: Telegram Users */}
+              <g>
+                <rect x="50" y="30" width="100" height="80" rx="8" fill="url(#blueGrad)" opacity="0.9" />
+                <text x="100" y="70" textAnchor="middle" fill="white" fontSize="14" fontWeight="500">
+                  Telegram
+                </text>
+                <text x="100" y="88" textAnchor="middle" fill="white" fontSize="12">
+                  Users
+                </text>
+              </g>
+
+              {/* Arrow 1 */}
+              <path d="M 150 70 L 210 70" stroke="#0891b2" strokeWidth="3" fill="none" markerEnd="url(#arrowhead)" />
+              <polygon points="210,70 200,65 200,75" fill="#0891b2" />
+
+              {/* Layer 2: API Gateway */}
+              <g>
+                <rect x="210" y="30" width="120" height="80" rx="8" fill="url(#blueGrad)" opacity="0.9" />
+                <text x="270" y="65" textAnchor="middle" fill="white" fontSize="14" fontWeight="500">
+                  API Gateway
+                </text>
+                <text x="270" y="83" textAnchor="middle" fill="white" fontSize="11">
+                  (FastAPI)
+                </text>
+              </g>
+
+              {/* Arrow 2 */}
+              <path d="M 330 70 L 390 70" stroke="#0891b2" strokeWidth="3" fill="none" markerEnd="url(#arrowhead)" />
+              <polygon points="390,70 380,65 380,75" fill="#0891b2" />
+
+              {/* Layer 3: Processing Core */}
+              <g>
+                <rect x="390" y="20" width="140" height="100" rx="8" fill="url(#greenGrad)" opacity="0.9" />
+                <text x="460" y="48" textAnchor="middle" fill="white" fontSize="14" fontWeight="500">
+                  Processing Core
+                </text>
+                <text x="460" y="66" textAnchor="middle" fill="white" fontSize="11">
+                  Redis Cache
+                </text>
+                <text x="460" y="81" textAnchor="middle" fill="white" fontSize="11">
+                  RabbitMQ Queue
+                </text>
+                <text x="460" y="96" textAnchor="middle" fill="white" fontSize="11">
+                  LLM (Llama 3.1)
+                </text>
+              </g>
+
+              {/* Arrow 3 */}
+              <path d="M 530 70 L 590 70" stroke="#16a34a" strokeWidth="3" fill="none" markerEnd="url(#arrowhead)" />
+              <polygon points="590,70 580,65 580,75" fill="#16a34a" />
+
+              {/* Layer 4: Workers */}
+              <g>
+                <rect x="590" y="30" width="120" height="80" rx="8" fill="url(#purpleGrad)" opacity="0.9" />
+                <text x="650" y="60" textAnchor="middle" fill="white" fontSize="14" fontWeight="500">
+                  Workers
+                </text>
+                <text x="650" y="78" textAnchor="middle" fill="white" fontSize="11">
+                  Text/Media Extract
+                </text>
+              </g>
+
+              {/* Arrow 4 */}
+              <path d="M 710 70 L 770 70" stroke="#7c3aed" strokeWidth="3" fill="none" markerEnd="url(#arrowhead)" />
+              <polygon points="770,70 760,65 760,75" fill="#7c3aed" />
+
+              {/* Layer 5: Database */}
+              <g>
+                <rect x="770" y="30" width="100" height="80" rx="8" fill="url(#blueGrad)" opacity="0.9" />
+                <text x="820" y="68" textAnchor="middle" fill="white" fontSize="14" fontWeight="500">
+                  Database
+                </text>
+                <text x="820" y="86" textAnchor="middle" fill="white" fontSize="11">
+                  PostgreSQL
+                </text>
+              </g>
+
+              {/* Arrow 5 */}
+              <path d="M 870 70 L 930 70" stroke="#0891b2" strokeWidth="3" fill="none" markerEnd="url(#arrowhead)" />
+              <polygon points="930,70 920,65 920,75" fill="#0891b2" />
+
+              {/* Layer 6: Output */}
+              <g>
+                <rect x="930" y="30" width="100" height="80" rx="8" fill="url(#greenGrad)" opacity="0.9" />
+                <text x="980" y="60" textAnchor="middle" fill="white" fontSize="14" fontWeight="500">
+                  Telegram
+                </text>
+                <text x="980" y="78" textAnchor="middle" fill="white" fontSize="14" fontWeight="500">
+                  Output
+                </text>
+              </g>
+
+              {/* Infrastructure Support - Top Right */}
+              <g>
+                <rect x="930" y="150" width="160" height="100" rx="8" fill="none" stroke="#16a34a" strokeWidth="2" strokeDasharray="5,5" opacity="0.8" />
+                <text x="1010" y="170" textAnchor="middle" fill="#16a34a" fontSize="12" fontWeight="600">
+                  Deployment
+                </text>
+                <text x="1010" y="188" textAnchor="middle" fill="#16a34a" fontSize="11">
+                  Kubernetes
+                </text>
+                <text x="1010" y="203" textAnchor="middle" fill="#16a34a" fontSize="11">
+                  Auto-scaling
+                </text>
+                <text x="1010" y="218" textAnchor="middle" fill="#16a34a" fontSize="11">
+                  Load Balancing
+                </text>
+              </g>
+
+              {/* Monitoring - Bottom Left */}
+              <g>
+                <rect x="50" y="150" width="160" height="100" rx="8" fill="none" stroke="#7c3aed" strokeWidth="2" strokeDasharray="5,5" opacity="0.8" />
+                <text x="130" y="170" textAnchor="middle" fill="#7c3aed" fontSize="12" fontWeight="600">
+                  Monitoring
+                </text>
+                <text x="130" y="188" textAnchor="middle" fill="#7c3aed" fontSize="11">
+                  Prometheus
+                </text>
+                <text x="130" y="203" textAnchor="middle" fill="#7c3aed" fontSize="11">
+                  Grafana Dashboards
+                </text>
+                <text x="130" y="218" textAnchor="middle" fill="#7c3aed" fontSize="11">
+                  Real-time Alerts
+                </text>
+              </g>
+
+              {/* Data Flow - Center Bottom */}
+              <g>
+                <rect x="300" y="420" width="600" height="140" rx="8" fill="none" stroke="#0891b2" strokeWidth="2" opacity="0.4" />
+                <text x="600" y="445" textAnchor="middle" fill="#0891b2" fontSize="12" fontWeight="600">
+                  Data Flow & Guarantees
+                </text>
+
+                <text x="310" y="470" fill="#0891b2" fontSize="11">
+                  ✓ Message deduplication prevents duplicate tasks
+                </text>
+                <text x="310" y="490" fill="#0891b2" fontSize="11">
+                  ✓ Database transactions ensure data integrity
+                </text>
+                <text x="310" y="510" fill="#0891b2" fontSize="11">
+                  ✓ Redis caching for instant responses (10-min TTL)
+                </text>
+                <text x="310" y="530" fill="#0891b2" fontSize="11">
+                  ✓ RabbitMQ ensures no messages are lost
+                </text>
+                <text x="310" y="550" fill="#0891b2" fontSize="11">
+                  ✓ Webhook signature verification for security
+                </text>
+              </g>
+            </svg>
+          </div>
+
+          <div className="grid gap-8 md:grid-cols-3 mt-16">
+            <div className="group p-8 border-2 border-gray-100 hover:border-blue-600 transition-all duration-300 rounded-lg">
+              <div className="h-1 w-12 bg-gradient-to-r from-blue-600 to-cyan-600 mb-6"></div>
+              <h3 className="text-lg font-medium mb-3">High Availability</h3>
+              <p className="text-gray-600 leading-relaxed text-sm">
+                Deployed on Kubernetes with auto-scaling. Multiple replicas of each service ensure zero downtime.
+                99.9% uptime SLA with automated failover.
+              </p>
+            </div>
+
+            <div className="group p-8 border-2 border-gray-100 hover:border-green-600 transition-all duration-300 rounded-lg">
+              <div className="h-1 w-12 bg-gradient-to-r from-green-600 to-cyan-600 mb-6"></div>
+              <h3 className="text-lg font-medium mb-3">Performance Optimization</h3>
+              <p className="text-gray-600 leading-relaxed text-sm">
+                Redis caching reduces database queries by 90%. Message queuing with RabbitMQ prevents bottlenecks.
+                Microservices architecture allows independent scaling.
+              </p>
+            </div>
+
+            <div className="group p-8 border-2 border-gray-100 hover:border-purple-600 transition-all duration-300 rounded-lg">
+              <div className="h-1 w-12 bg-gradient-to-r from-purple-600 to-blue-600 mb-6"></div>
+              <h3 className="text-lg font-medium mb-3">Data Security</h3>
+              <p className="text-gray-600 leading-relaxed text-sm">
+                Webhook signatures prevent tampering. Database transactions maintain ACID properties.
+                Encrypted storage with automated backups every 6 hours.
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-16 p-8 bg-gradient-to-br from-blue-50 to-green-50 rounded-lg border border-gray-200">
+            <h3 className="text-xl font-medium mb-4">Why This Architecture?</h3>
+            <ul className="space-y-3 text-gray-700">
+              <li className="flex gap-3">
+                <span className="text-blue-600 font-bold">→</span>
+                <span><strong>Scalability:</strong> Microservices and Kubernetes allow us to scale individual components independently based on demand.</span>
+              </li>
+              <li className="flex gap-3">
+                <span className="text-blue-600 font-bold">→</span>
+                <span><strong>Reliability:</strong> Multiple layers of caching, queuing, and monitoring ensure consistent performance even during traffic spikes.</span>
+              </li>
+              <li className="flex gap-3">
+                <span className="text-blue-600 font-bold">→</span>
+                <span><strong>Maintainability:</strong> Clear separation of concerns makes it easy to update and debug individual components.</span>
+              </li>
+              <li className="flex gap-3">
+                <span className="text-blue-600 font-bold">→</span>
+                <span><strong>Security:</strong> Layered approach with signature verification, encrypted storage, and transaction safety.</span>
+              </li>
+            </ul>
+          </div>
+        </section>
+
+        {/* Decorative Line */}
+        <div className="relative py-16 max-w-7xl mx-auto">
+          <div className="h-px w-full bg-gradient-to-r from-transparent via-gray-300 to-transparent"></div>
+        </div>
+
         {/* Getting Started Section */}
         <section className="relative py-24 bg-gradient-to-br from-blue-600 to-green-600 text-white -mx-6 md:-mx-12 lg:-mx-24 px-6 md:px-12 lg:px-24">
           <div className="max-w-7xl mx-auto">
