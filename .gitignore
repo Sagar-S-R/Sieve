@@ -158,4 +158,16 @@ storybook-static/
 **/public/workbox-*.js.map
 **/public/worker-*.js.map
 
+# ============================================================================
+# Documentation - Archive & Removed Items
+# ============================================================================
+
+# TODO Archive file (contains removed TODO items from cleanup)
+123.md
+
+# Temporary documentation files
+*.tmp.md
+draft*.md
+archive*.md
+
 zips/

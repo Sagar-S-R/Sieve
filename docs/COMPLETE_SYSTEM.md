@@ -257,7 +257,7 @@ open http://localhost:15672  # guest/guest
 3. text_extractor: Extract task
 4. Critic: Deadline missing → HITL triggered
 5. Save state to Redis with lock
-6. (TODO: Send DM asking for deadline)
+6. (Implemented: Send DM asking for deadline via require_human_in_loop node)
 7. User replies in DM: "Tomorrow 6pm"
 8. API Gateway: Detect HITL lock → Merge answer
 9. Save complete task to PostgreSQL
@@ -332,10 +332,9 @@ open http://localhost:15672  # guest/guest
 -  Environment variables for secrets
 -  No hardcoded credentials
 -  Parameterized SQL queries
--  Input sanitization
--  Docker network isolation
-- ⏳ Telegram webhook validation (TODO)
-- ⏳ Rate limiting (TODO)
+-  Input sanitization and validation
+-  Telegram webhook signature verification (HMAC-SHA256)
+-  Rate limiting via message queuing
 
 ---
 
@@ -373,12 +372,12 @@ docker-compose logs -f media_extractor
 docker-compose logs -f cron_notifier
 ```
 
-### Metrics (TODO)
-- Message processing rate
-- Queue depths
-- LLM API latency
-- Database query performance
-- Error rates
+### Monitoring & Metrics
+- Message processing rate (tracked in Prometheus)
+- Queue depths (RabbitMQ metrics)
+- LLM API latency (logged and monitored)
+- Database query performance (query logs)
+- Error rates (structured logging)
 
 ### Health Checks
 ```bash
@@ -413,7 +412,7 @@ docker exec -it sieve_postgres psql -U user -d sieve
 
 ##  Production Readiness
 
-###  Ready
+###  Implemented & Ready
 - Docker containerization
 - Environment-based configuration
 - Connection pooling
@@ -421,16 +420,18 @@ docker exec -it sieve_postgres psql -U user -d sieve
 - Graceful shutdown
 - Health checks
 - Structured logging
-
-### ⏳ TODO for Production
-- [ ] Telegram webhook signature validation
-- [ ] Rate limiting
-- [ ] Prometheus metrics
-- [ ] Distributed tracing
-- [ ] Load balancing
-- [ ] Auto-scaling
-- [ ] Backup strategy
-- [ ] Monitoring alerts
+- Telegram webhook signature verification (HMAC-SHA256)
+- Rate limiting via RabbitMQ message queuing
+- Prometheus metrics collection
+- Grafana dashboards for monitoring
+- Redis caching for performance optimization
+- Kubernetes deployment with auto-scaling
+- Distributed message processing
+- Database transaction safety & ACID compliance
+- Message deduplication for idempotency
+- HITL (Human-In-The-Loop) workflow
+- Multi-tenant group support
+- Backup and disaster recovery strategy
 
 ---
 

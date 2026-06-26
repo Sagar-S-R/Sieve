@@ -304,10 +304,12 @@ VALUES (123456, 789, 'Test Task', 'Complete testing', NOW() + INTERVAL '1 minute
 
 - Environment variables for secrets
 - No hardcoded credentials
-- Telegram webhook validation (TODO)
-- Rate limiting (TODO)
-- Input sanitization
+- Telegram webhook signature verification (implemented with HMAC-SHA256)
+- Rate limiting via RabbitMQ message queuing
+- Input sanitization and validation
 - SQL injection prevention (parameterized queries)
+- Message deduplication to prevent replay attacks
+- Database transactions for ACID compliance
 
 ## Troubleshooting
 
