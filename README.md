@@ -376,8 +376,3 @@ docker-compose logs -f cron_notifier
 docker exec -it sieve_postgres psql -U user -d sieve -c \
   "SELECT * FROM tasks WHERE deadline <= NOW() AND reminder_level < 3;"
 ```
-
-## License
-
-MIT
-
