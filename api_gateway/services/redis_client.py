@@ -253,3 +253,108 @@ async def invalidate_recent_tasks_cache_async(group_id: int):
             print(f"[CACHE INVALIDATE] recent_tasks:{group_id}:* ({len(keys)} keys)")
     except Exception as e:
         print(f"[CACHE ERROR] Failed to invalidate recent_tasks:{group_id}: {e}")
+
+
+# ============================================================================
+# ROLLING MESSAGE BUFFER (NEW)
+# ============================================================================
+
+async def push_raw_message(group_id: int, message_data: dict, window_size: int = 20, ttl_seconds: int = 7200):
+    """
+    Push raw message to rolling window BEFORE triage.
+    Keeps last window_size messages per group.
+    TTL: 2 hours.
+    Key: raw_msgs:{group_id}
+    
+    Args:
+        group_id: Telegram group ID
+        message_data: Dict with user_id, message_text, timestamp, message_id
+        window_size: Max messages to keep (default 20)
+        ttl_seconds: Expiry time (default 2 hours)
+    """
+    import json
+    try:
+        client = await get_redis_client()
+        key = f"raw_msgs:{group_id}"
+        
+        # Add to left (newest first)
+        await client.lpush(key, json.dumps(message_data))
+        # Trim to keep only last N messages
+        await client.ltrim(key, 0, window_size - 1)
+        # Set expiry
+        await client.expire(key, ttl_seconds)
+    except Exception as e:
+        print(f"[BUFFER ERROR] Failed to push message to buffer:{group_id}: {e}")
+
+
+async def get_raw_message_window(group_id: int, limit: int = 20) -> list:
+    """
+    Get recent raw messages for a group.
+    Used by context_node to build conversation window.
+    
+    Args:
+        group_id: Telegram group ID
+        limit: Number of messages to retrieve
+        
+    Returns:
+        List of message dicts, most recent first
+    """
+    import json
+    try:
+        client = await get_redis_client()
+        key = f"raw_msgs:{group_id}"
+        # Get last N messages
+        messages_json = await client.lrange(key, 0, limit - 1)
+        return [json.loads(msg) for msg in messages_json]
+    except Exception as e:
+        print(f"[BUFFER ERROR] Failed to get buffer:{group_id}: {e}")
+        return []
+
+
+# ============================================================================
+# ROLLING MESSAGE BUFFER (NEW)
+# ============================================================================
+
+async def add_message_to_buffer(group_id: int, message_text: str, max_size: int = 20):
+    """
+    Add a message to the rolling buffer for a group (async).
+    Maintains last N messages in a Redis list.
+    
+    Args:
+        group_id: The Telegram group ID
+        message_text: The message text to add
+        max_size: Maximum number of messages to keep (default 20)
+    """
+    try:
+        client = await get_redis_client()
+        key = f"raw_msgs:{group_id}"
+        # Add to right (most recent)
+        await client.rpush(key, message_text)
+        # Trim to keep only last max_size messages
+        await client.ltrim(key, -max_size, -1)
+        # Set expiry (2 hours)
+        await client.expire(key, 7200)
+    except Exception as e:
+        print(f"[BUFFER ERROR] Failed to add message to buffer:{group_id}: {e}")
+
+
+async def get_message_buffer(group_id: int, limit: int = 20) -> list:
+    """
+    Get the last N messages from the rolling buffer (async).
+    
+    Args:
+        group_id: The Telegram group ID
+        limit: Number of messages to retrieve (default 20)
+        
+    Returns:
+        List of message strings, most recent last. Empty list if none found.
+    """
+    try:
+        client = await get_redis_client()
+        key = f"raw_msgs:{group_id}"
+        # Get last N messages (negative indices get from right/end)
+        messages = await client.lrange(key, -limit, -1)
+        return messages  # Already decoded with decode_responses=True
+    except Exception as e:
+        print(f"[BUFFER ERROR] Failed to get buffer:{group_id}: {e}")
+        return []

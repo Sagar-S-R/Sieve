@@ -2,10 +2,9 @@ from workers.text_extractor.graph.state import AgentState
 from workers.text_extractor.services.redis_client import set_hitl_lock
 from workers.text_extractor.services.telegram_client import send_dm
 from workers.text_extractor.core.logger import logger
-import asyncio
 
 
-def require_human_in_loop(state: AgentState) -> AgentState:
+async def require_human_in_loop(state: AgentState) -> AgentState:
     """Trigger HITL when clarification needed - sends DM to all group subscribers."""
     if state.get("needs_human"):
         group_id = state.get("group_id")
@@ -30,7 +29,7 @@ def require_human_in_loop(state: AgentState) -> AgentState:
         
         # Get all subscribers for this group
         from workers.text_extractor.services.database import get_group_subscribers
-        subscribers = asyncio.run(get_group_subscribers(group_id))
+        subscribers = await get_group_subscribers(group_id)
         
         if not subscribers:
             logger.warning(f"No subscribers found for group {group_id}", extra={"node": "hitl_node"})
@@ -40,17 +39,40 @@ def require_human_in_loop(state: AgentState) -> AgentState:
         
         # Save state to Redis for each subscriber and send DM
         for subscriber_id in subscribers:
+            # Build complete HITL state with excluded_task_ids and hitl_round
+            hitl_state = {
+                "user_id": state.get("user_id"),
+                "group_id": state.get("group_id"),
+                "message_text": state.get("message_text"),
+                "original_message": state.get("original_message") or state.get("message_text"),
+                "intent": state.get("intent"),
+                "message_buffer": state.get("message_buffer"),
+                "db_context": state.get("db_context"),
+                "context_retrieval_reasoning": state.get("context_retrieval_reasoning"),
+                "extracted_data": extracted_data.model_dump() if extracted_data else None,
+                "update_candidates": state.get("update_candidates", []),
+                "excluded_task_ids": state.get("excluded_task_ids", []),
+                "proposed_task_id": state.get("selected_task_id"),
+                "proposed_new_value": str(extracted_data.deadline) if extracted_data and extracted_data.deadline else (
+                    extracted_data.location if extracted_data else None
+                ),
+                "hitl_reason": state.get("hitl_reason"),
+                "hitl_round": state.get("hitl_round", 0) + 1,
+                "validation_error": state.get("validation_error"),
+            }
+            
             # Save state to Redis with subscriber's ID
-            set_hitl_lock(subscriber_id, state)
+            set_hitl_lock(subscriber_id, hitl_state)
             
             logger.info(f"HITL Redis lock created for subscriber {subscriber_id}", extra={
                 "node": "hitl_node",
-                "subscriber_id": subscriber_id
+                "subscriber_id": subscriber_id,
+                "hitl_round": hitl_state["hitl_round"]
             })
             
             # Send Telegram DM to subscriber
             try:
-                asyncio.run(send_dm(subscriber_id, state["hitl_prompt"]))
+                await send_dm(subscriber_id, state["hitl_prompt"])
                 logger.info(f"HITL DM sent successfully to subscriber {subscriber_id}", extra={
                     "node": "hitl_node",
                     "subscriber_id": subscriber_id

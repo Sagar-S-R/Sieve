@@ -14,7 +14,7 @@ services:
       - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
       - postgres_data:/var/lib/postgresql/data
     ports:
-      - "5433:5432"  # Changed to 5433 to avoid conflict
+      - "5434:5432"  # Changed to 5434 to avoid conflict
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U user -d sieve"]
       interval: 10s
@@ -39,8 +39,8 @@ services:
       RABBITMQ_DEFAULT_USER: guest
       RABBITMQ_DEFAULT_PASS: guest
     ports:
-      - "5672:5672"   # AMQP
-      - "15672:15672" # Management UI
+      - "5673:5672"   # AMQP
+      - "15673:15672" # Management UI
       - "15692:15692" # Prometheus metrics
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "ping"]
@@ -64,6 +64,7 @@ services:
     container_name: sieve_api_gateway
     environment:
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - GROQ_API_KEY=${GROQ_API_KEY}
       - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
       - REDIS_URL=redis://redis:6379/0
       - DATABASE_URL=postgresql://user:password@postgres:5432/sieve

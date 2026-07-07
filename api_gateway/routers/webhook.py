@@ -4,53 +4,130 @@ from api_gateway.services.database import save_completed_task
 from api_gateway.services.rabbitmq import publish_to_queue
 from api_gateway.services.telegram import send_telegram_dm
 import hmac
+import re
+import json
 
 router = APIRouter()
 
+async def push_raw_message(group_id: int, message_data: dict):
+    """Push raw message to buffer before any triage."""
+    from api_gateway.services.redis_client import push_raw_message as redis_push_raw_message
+    await redis_push_raw_message(group_id, message_data)
 
 def verify_telegram_webhook(request: Request, bot_token: str):
     """
     Verify Telegram webhook signature to prevent unauthorized access.
-    
+
     Note: Telegram's secret token must be set when configuring the webhook.
     If not set, this check is skipped (for backward compatibility).
     """
     secret_token = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
-    
-    # If no secret token in header, skip verification (webhook not configured with secret)
-    # In production, you should always set a secret token
+
     if not secret_token:
-        return  # Skip verification
-    
-    # Use constant-time comparison to prevent timing attacks
+        return  # Skip verification if no secret configured
+
     if not hmac.compare_digest(secret_token, bot_token):
         raise HTTPException(status_code=403, detail="Invalid Telegram signature")
 
 
-# Zero-cost triage keywords - expanded to catch more reminder-like messages
-TRIAGE_KEYWORDS = [
-    # Deadlines & Time
-    "due", "deadline", "by", "before", "until", "tomorrow", "today", "tonight",
-    "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
-    "next week", "this week", "later", "soon",
-    
-    # Academic/Work
-    "assignment", "homework", "test", "exam", "quiz", "midterm", "final",
-    "hackathon", "submit", "submission", "paper", "project", "report",
-    "presentation", "lecture", "class", "lab",
-    
-    # Events & Meetings
-    "meeting", "meet", "call", "conference", "event", "appointment",
-    "session", "interview", "discussion", "standup", "sync",
-    
-    # Actions
-    "remind", "reminder", "remember", "don't forget", "dont forget",
-    "need to", "have to", "must", "should", "gotta", "got to",
-    "attend", "join", "participate", "complete", "finish", "do",
-    
-    # Tasks
-    "task", "todo", "to-do", "to do", "work on", "follow up", "followup"
+# ============================================================================
+# TWO-STAGE TRIAGE
+# ============================================================================
+
+# Stage 1 - Pure noise patterns (drop these immediately)
+# Must match the ENTIRE message (re.fullmatch)
+_PURE_NOISE_PATTERNS = [
+    r'^[\U0001F44D\U0001F44E\U0001F602\U0001F64F\u2764\u2705\U0001F525\U0001F480\U0001F44C\U0001F44B\U0001F64C\U0001F44F]+$',  # pure emoji
+    r'^(ok|okay|k|yes|no|yep|nope|nah|same|real|lol|haha|hehe|hmm|oh|ah|gg|bruh|lmao|lmfao|omg|wtf|fr|ngl|imo|smh)$',
+    r'^(thanks|thank you|ty|np|noted|sure|fine|got it|ic|ik|gotcha|roger|copy that|understood|alright|alr)$',
+    r'^(nice|great|good|cool|wow|damn|bro|dude|man|yaar|bhai|ok bro|ok thanks|okay thanks)$',
 ]
+
+# Compile patterns once at import time for performance
+_COMPILED_NOISE_PATTERNS = [re.compile(p, re.IGNORECASE) for p in _PURE_NOISE_PATTERNS]
+
+
+def is_pure_noise(message: str) -> bool:
+    """
+    Stage 1 triage: Returns True ONLY for messages that are obviously noise.
+
+    Safety rules — never drop if:
+    - Message is longer than 5 words (too likely to be meaningful)
+    - Contains any digit (dates, times, room numbers, roll numbers)
+    - Contains a URL
+    - Contains a hashtag or @ mention (could be group-relevant)
+    """
+    msg = message.strip().lower()
+
+    if not msg:
+        return True  # Empty message = noise
+
+    # Safety gates — if any of these are true, it's NOT noise
+    if len(msg.split()) > 5:
+        return False
+
+    if any(char.isdigit() for char in msg):
+        return False
+
+    if 'http' in msg or 'www.' in msg:
+        return False
+
+    if '#' in msg or '@' in msg:
+        return False
+
+    # Check against compiled noise patterns
+    return any(p.fullmatch(msg) for p in _COMPILED_NOISE_PATTERNS)
+
+
+# Stage 2 - High signal keywords for priority routing
+# These don't gate the message — they just flag priority
+_HIGH_SIGNAL_KEYWORDS = [
+    # Deadlines & time
+    "deadline", "due", "submit", "submission", "by", "before", "until",
+    "tomorrow", "today", "tonight", "eod", "cob",
+    "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+
+    # Academic
+    "lab", "test", "exam", "quiz", "assignment", "homework", "project",
+    "report", "presentation", "record", "practical", "practicum",
+    "viva", "hackathon", "internship", "placement",
+
+    # Location / Venue
+    "room", "venue", "block", "wing", "building", "hall", "floor",
+    "moved", "shifted", "changed", "cancelled", "postponed", "rescheduled",
+
+    # Actions
+    "bring", "write", "fill", "collect", "attend", "join", "register",
+
+    # Events
+    "meeting", "class", "lecture", "session", "seminar", "workshop",
+]
+
+
+def triage_message(text: str) -> tuple[bool, str]:
+    """
+    Two-stage triage. Returns (should_drop, reason).
+
+    Stage 1: Hard DROP — pure noise only
+    Stage 2: Priority tag — high signal vs low signal (both go to queue)
+
+    Returns:
+        (True, "noise")           → drop
+        (False, "high_signal")    → queue, priority
+        (False, "low_signal")     → queue, normal
+    """
+    # Stage 1
+    if is_pure_noise(text):
+        return (True, "noise")
+
+    # Stage 2 — all non-noise goes to queue, just label priority
+    text_lower = text.lower()
+    has_high_signal = any(kw in text_lower for kw in _HIGH_SIGNAL_KEYWORDS)
+
+    if has_high_signal:
+        return (False, "high_signal")
+    else:
+        return (False, "low_signal")
 
 
 @router.post("/webhook")
@@ -87,9 +164,9 @@ async def telegram_webhook(request: Request):
                 success = await unsubscribe_from_group(group_id, user_id)
                 
                 if success:
-                    response_text = "✅ Unsubscribed successfully!"
+                    response_text = " Unsubscribed successfully!"
                 else:
-                    response_text = "ℹ️ You weren't subscribed to this group."
+                    response_text = " You weren't subscribed to this group."
                 
                 # Answer callback query
                 answer_url = f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}/answerCallbackQuery"
@@ -141,20 +218,20 @@ async def telegram_webhook(request: Request):
                     deep_link = f"https://t.me/{bot_username}?start=sub_{group_id}"
                     
                     group_welcome = (
-                        f"🤖 <b>Sieve Bot Activated</b>\n\n"
+                        f" <b>Sieve Bot Activated</b>\n\n"
                         f"I'm now monitoring this group for tasks and deadlines.\n\n"
-                        f"💡 <b>How it works:</b>\n"
+                        f" <b>How it works:</b>\n"
                         f"• Anyone can mention tasks naturally in chat\n"
                         f"• I'll extract deadlines automatically\n"
                         f"• Subscribers get private DM reminders\n\n"
-                        f"🔔 <b>Want reminders?</b>\n"
+                        f" <b>Want reminders?</b>\n"
                         f"Click the button below to enable private notifications!"
                     )
                     
                     inline_keyboard = {
                         "inline_keyboard": [[
                             {
-                                "text": "🔔 Enable My Reminders",
+                                "text": " Enable My Reminders",
                                 "url": deep_link
                             }
                         ]]
@@ -175,9 +252,9 @@ async def telegram_webhook(request: Request):
                     
                     # Also send DM to the person who added it
                     welcome_dm = (
-                        f"🎉 <b>Thanks for adding me to {group_title}!</b>\n\n"
+                        f" <b>Thanks for adding me to {group_title}!</b>\n\n"
                         f"You're now subscribed to reminders from this group.\n\n"
-                        f"💡 <b>Want others to get reminders too?</b>\n"
+                        f" <b>Want others to get reminders too?</b>\n"
                         f"They can click the button I posted in the group!"
                     )
                     await send_telegram_dm(user_id, welcome_dm)
@@ -205,41 +282,41 @@ async def telegram_webhook(request: Request):
                         
                         if success:
                             confirmation_msg = (
-                                f"✅ <b>Subscription Confirmed!</b>\n\n"
+                                f" <b>Subscription Confirmed!</b>\n\n"
                                 f"You're now subscribed to reminders from this group.\n\n"
-                                f"💡 <b>What happens next:</b>\n"
+                                f" <b>What happens next:</b>\n"
                                 f"• When tasks are mentioned in the group, I'll extract them\n"
                                 f"• If I need clarification, I'll DM you\n"
                                 f"• You'll get reminders 24h, 1h, and at deadline\n\n"
-                                f"🔕 <b>Want to unsubscribe?</b>\n"
+                                f" <b>Want to unsubscribe?</b>\n"
                                 f"Send /unsubscribe to manage your subscriptions."
                             )
                         else:
-                            confirmation_msg = "✅ You're already subscribed to this group!"
+                            confirmation_msg = " You're already subscribed to this group!"
                         
                         await send_telegram_dm(user_id, confirmation_msg)
                         return {"status": "ok"}
                         
                     except ValueError:
-                        error_msg = "❌ Invalid subscription link. Please use the button from the group."
+                        error_msg = " Invalid subscription link. Please use the button from the group."
                         await send_telegram_dm(user_id, error_msg)
                         return {"status": "ok"}
                 
                 # Regular /start (no deep link) - Simple welcome message
                 welcome_message = (
-                    "👋 <b>Welcome to Sieve!</b>\n\n"
+                    " <b>Welcome to Sieve!</b>\n\n"
                     "I'm your smart reminder assistant. I can help you:\n"
                     "• Extract reminders from conversations\n"
                     "• Set deadlines automatically\n"
                     "• Send you notifications when tasks are due\n\n"
-                    "🚀 <b>Get Started:</b>\n"
+                    " <b>Get Started:</b>\n"
                     "1. Add me to your group using the button below\n"
                     "2. I'll auto-subscribe you to that group\n"
                     "3. Just chat naturally and mention tasks\n"
                     "4. I'll extract and remind you automatically!\n\n"
-                    "💡 <b>Example:</b>\n"
+                    " <b>Example:</b>\n"
                     "\"Remind me to submit assignment tomorrow at 5pm\"\n\n"
-                    "📋 <b>Commands:</b>\n"
+                    " <b>Commands:</b>\n"
                     "/unsubscribe - Manage your subscriptions\n"
                     "/help - Show help message"
                 )
@@ -249,7 +326,7 @@ async def telegram_webhook(request: Request):
                     "inline_keyboard": [
                         [
                             {
-                                "text": "➕ Add to Group",
+                                "text": " Add to Group",
                                 "url": f"https://t.me/{bot_username}?startgroup=start"
                             }
                         ]
@@ -266,7 +343,7 @@ async def telegram_webhook(request: Request):
                 subscriptions = await get_user_subscriptions(user_id)
                 
                 if not subscriptions:
-                    msg = "ℹ️ You're not subscribed to any groups yet."
+                    msg = " You're not subscribed to any groups yet."
                     await send_telegram_dm(user_id, msg)
                     return {"status": "ok"}
                 
@@ -274,7 +351,7 @@ async def telegram_webhook(request: Request):
                 keyboard_buttons = []
                 for sub in subscriptions:
                     group_id = sub['group_id']
-                    button_text = f"🔕 Unsubscribe from Group {group_id}"
+                    button_text = f" Unsubscribe from Group {group_id}"
                     callback_data = f"unsub_{group_id}"
                     
                     keyboard_buttons.append([{
@@ -285,7 +362,7 @@ async def telegram_webhook(request: Request):
                 inline_keyboard = {"inline_keyboard": keyboard_buttons}
                 
                 msg = (
-                    "📋 <b>Your Subscriptions</b>\n\n"
+                    " <b>Your Subscriptions</b>\n\n"
                     f"You're subscribed to {len(subscriptions)} group(s).\n"
                     "Click a button below to unsubscribe:"
                 )
@@ -296,7 +373,7 @@ async def telegram_webhook(request: Request):
             # Handle /help command
             if text and text.startswith("/help"):
                 help_message = (
-                    "📖 <b>How to use Sieve:</b>\n\n"
+                    " <b>How to use Sieve:</b>\n\n"
                     "<b>In Groups:</b>\n"
                     "Just chat naturally! I'll detect reminders like:\n"
                     "• \"Remind me to call John at 3pm\"\n"
@@ -392,21 +469,28 @@ async def telegram_webhook(request: Request):
                 await publish_to_queue("heavy_media_queue", payload)
                 return {"status": "ok"}
             
-            # Pure text message - apply zero-cost triage
+            # Pure text message — two-stage triage
             if text:
-                text_lower = text.lower()
+                # Step 1: ALWAYS buffer (before triage)
+                from datetime import datetime
+                await push_raw_message(group_id, {
+                    "user_id": user_id,
+                    "message_text": text,
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "message_id": message.get("message_id")
+                })
                 
-                # Check for triage keywords
-                has_keywords = any(keyword in text_lower for keyword in TRIAGE_KEYWORDS)
-                
-                if has_keywords:
-                    # Route to fast_text_queue
-                    print(f"[ROUTE] Text with keywords → fast_text_queue")
-                    await publish_to_queue("fast_text_queue", payload)
+                should_drop, reason = triage_message(text)
+
+                if should_drop:
+                    print(f"[DROP] Pure noise → dropped | msg='{text[:60]}'")
                 else:
-                    # Drop message to save LLM costs
-                    print(f"[DROP] Text without keywords - dropped")
-                
+                    print(f"[ROUTE] {reason} → fast_text_queue | msg='{text[:60]}'")
+                    # All non-noise goes to fast_text_queue
+                    # reason tag is informational (high_signal / low_signal)
+                    payload["triage_signal"] = reason
+                    await publish_to_queue("fast_text_queue", payload)
+
                 return {"status": "ok"}
         
         return {"status": "ok"}
@@ -456,29 +540,29 @@ async def handle_tasks_command(user_id: int):
     tasks = await get_user_tasks(user_id)
     
     # Build response message
-    response = "📋 <b>Your Tasks</b>\n\n"
+    response = " <b>Your Tasks</b>\n\n"
     
     # Upcoming tasks
     if tasks['upcoming']:
-        response += f"⏰ <b>Upcoming ({len(tasks['upcoming'])})</b>\n"
+        response += f" <b>Upcoming ({len(tasks['upcoming'])})</b>\n"
         response += "━━━━━━━━━━━━━━━━\n"
         for task in tasks['upcoming']:
             response += f"#{task['id']} - {task['title']}\n"
-            response += f"📅 Deadline: {format_deadline(task['deadline'])}\n"
-            response += f"👥 Group: {task['group_id']}\n\n"
+            response += f" Deadline: {format_deadline(task['deadline'])}\n"
+            response += f" Group: {task['group_id']}\n\n"
     
     # Overdue tasks
     if tasks['overdue']:
-        response += f"🔴 <b>Overdue ({len(tasks['overdue'])})</b>\n"
+        response += f" <b>Overdue ({len(tasks['overdue'])})</b>\n"
         response += "━━━━━━━━━━━━━━━━\n"
         for task in tasks['overdue']:
             response += f"#{task['id']} - {task['title']}\n"
-            response += f"📅 Deadline: {format_deadline(task['deadline'])} (overdue)\n"
-            response += f"👥 Group: {task['group_id']}\n\n"
+            response += f" Deadline: {format_deadline(task['deadline'])} (overdue)\n"
+            response += f" Group: {task['group_id']}\n\n"
     
     # No tasks
     if not tasks['upcoming'] and not tasks['overdue']:
-        response += "✅ No tasks found\n\n"
+        response += " No tasks found\n\n"
     
     # Usage instructions
     response += "Use /delete &lt;id&gt; to delete a task\n"
@@ -510,7 +594,7 @@ async def handle_delete_command(user_id: int, message_text: str):
     except ValueError:
         await send_telegram_dm(
             user_id,
-            "❌ Invalid task ID. Must be a number."
+            " Invalid task ID. Must be a number."
         )
         return
     
@@ -518,14 +602,14 @@ async def handle_delete_command(user_id: int, message_text: str):
     deleted_task = await delete_task(task_id, user_id)
     
     if deleted_task:
-        response = f"✅ Task deleted successfully!\n\n"
+        response = f" Task deleted successfully!\n\n"
         response += f'"{deleted_task["title"]}"\n'
         response += f"Deadline: {format_deadline(deleted_task['deadline'])}"
         await send_telegram_dm(user_id, response)
     else:
         await send_telegram_dm(
             user_id,
-            "❌ Task not found or you don't have permission to delete it."
+            " Task not found or you don't have permission to delete it."
         )
 
 
@@ -553,7 +637,7 @@ async def handle_edit_command(user_id: int, message_text: str):
     except ValueError:
         await send_telegram_dm(
             user_id,
-            "❌ Invalid task ID. Must be a number."
+            " Invalid task ID. Must be a number."
         )
         return
     
@@ -563,7 +647,7 @@ async def handle_edit_command(user_id: int, message_text: str):
     if not task or task['user_id'] != user_id:
         await send_telegram_dm(
             user_id,
-            "❌ Task not found or you don't have permission to edit it."
+            " Task not found or you don't have permission to edit it."
         )
         return
     
@@ -576,7 +660,7 @@ async def handle_edit_command(user_id: int, message_text: str):
     })
     
     # Ask for new deadline
-    response = f"📝 <b>Editing task #{task_id}</b>\n\n"
+    response = f" <b>Editing task #{task_id}</b>\n\n"
     response += f'"{task["title"]}"\n'
     response += f"Current deadline: {format_deadline(task['deadline'])}\n\n"
     response += "Please send the new deadline (e.g., \"tomorrow 5pm\", \"May 15 EOD\")"
@@ -604,7 +688,7 @@ async def handle_edit_reply(user_id: int, message_text: str):
         if not new_deadline:
             await send_telegram_dm(
                 user_id,
-                "❌ Could not understand the deadline. Please try again.\n"
+                " Could not understand the deadline. Please try again.\n"
                 "Example: \"tomorrow 5pm\", \"May 15 EOD\""
             )
             return
@@ -618,20 +702,20 @@ async def handle_edit_reply(user_id: int, message_text: str):
         )
         
         if success:
-            response = f"✅ Task updated successfully!\n\n"
+            response = f" Task updated successfully!\n\n"
             response += f"New deadline: {format_deadline(new_deadline)}"
             await send_telegram_dm(user_id, response)
         else:
             await send_telegram_dm(
                 user_id,
-                "❌ Failed to update task. Please try again."
+                " Failed to update task. Please try again."
             )
     
     except Exception as e:
         print(f"[EDIT] Error parsing deadline: {e}")
         await send_telegram_dm(
             user_id,
-            "❌ Error processing deadline. Please try again."
+            " Error processing deadline. Please try again."
         )
     
     finally:

@@ -164,6 +164,7 @@ storybook-static/
 
 # TODO Archive file (contains removed TODO items from cleanup)
 123.md
+pdf.md
 
 # Temporary documentation files
 *.tmp.md

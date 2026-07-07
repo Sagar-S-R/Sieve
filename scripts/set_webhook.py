@@ -16,7 +16,7 @@ if not BOT_TOKEN:
     sys.exit(1)
 
 # Cloudflare tunnel URL
-TUNNEL_URL = "https://cooling-verified-plates-decimal.trycloudflare.com"
+TUNNEL_URL = "https://parts-coding-park-logging.trycloudflare.com"
 WEBHOOK_URL = f"{TUNNEL_URL}/webhook"
 
 def set_webhook():

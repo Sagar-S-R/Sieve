@@ -2,81 +2,115 @@
 
 **Sieve** is an distributed AI system that autonomously monitors Telegram group chats, extracts tasks and deadlines using Google Gemini, and sends intelligent private reminders.
 
-## Architecture
+## System Architecture
 
 ```mermaid
 graph TD
-    TG["📱 Telegram Users"]
-    AG["🚀 API Gateway<br/>FastAPI"]
-    TRIAGE["🔍 Zero-Cost Triage<br/>Keyword Filter"]
+    TG([Telegram Users]) -->|Webhook| GW[API Gateway<br/>FastAPI]
     
-    RMQ["🐰 RabbitMQ<br/>Message Queue"]
-    REDIS["⚡ Redis<br/>Caching & HITL Locks"]
+    GW --> BUF[Raw Message Buffer<br/>Redis Rolling Window<br/>20 msgs · 2hr TTL]
     
-    TE["📝 Text Extractor<br/>LangGraph"]
-    ME["🖼️ Media Extractor<br/>Vision + OCR"]
-    CN["⏰ Cron Notifier<br/>60s Loop"]
+    BUF --> TRIAGE[Two-Stage Triage<br/>Stage 1: Drop pure noise<br/>Stage 2: Route everything else]
     
-    DB["🗄️ PostgreSQL<br/>Task Storage"]
-    TELEOUT["💬 Telegram DMs<br/>Reminders"]
+    TRIAGE -->|Text messages| RMQ[RabbitMQ<br/>Message Queue]
+    TRIAGE -->|Media messages| RMQ
+    TRIAGE -->|HITL reply| REDIS[Redis<br/>Caching · HITL Locks<br/>Message Buffer]
     
-    TG -->|Webhook| AG
-    AG --> TRIAGE
-    TRIAGE -->|Text| RMQ
-    TRIAGE -->|Media| RMQ
-    TRIAGE -->|HITL Query| REDIS
-    
-    RMQ -->|fast_text_queue| TE
-    RMQ -->|heavy_media_queue| ME
-    
-    TE --> DB
-    ME --> DB
+    RMQ -->|fast_text_queue| TE[Text Extractor<br/>LangGraph]
+    RMQ -->|heavy_media_queue| ME[Media Extractor<br/>Vision + OCR]
     
     REDIS -->|State Management| TE
     REDIS -->|State Management| ME
     
-    DB -->|Poll Deadlines| CN
-    CN -->|Send Reminders| TELEOUT
-    TELEOUT -->|User Reply| AG
+    TE --> DB[PostgreSQL<br/>Task Storage]
+    ME --> DB
     
-    style TG fill:#2563eb,color:#fff
-    style AG fill:#2563eb,color:#fff
-    style TRIAGE fill:#16a34a,color:#fff
-    style RMQ fill:#dc2626,color:#fff
-    style REDIS fill:#7c3aed,color:#fff
-    style TE fill:#0891b2,color:#fff
-    style ME fill:#0891b2,color:#fff
-    style CN fill:#ea580c,color:#fff
-    style DB fill:#2563eb,color:#fff
-    style TELEOUT fill:#16a34a,color:#fff
+    DB -->|Poll Deadlines| CRON[Cron Notifier<br/>60s Loop]
+    
+    CRON -->|Send Reminders| DM([Telegram DMs<br/>Reminders])
+    
+    DM -->|User Reply| GW
 ```
 
 ## Features
 
-### 1. **Zero-Cost Triage**
-- API Gateway filters messages by keywords before sending to LLM
-- Saves Gemini API costs by dropping irrelevant messages
-- Keywords: "due", "deadline", "assignment", "test", "hackathon", etc.
+### 1. Two-Stage Triage
+- Stage 1: Drops pure noise only (single emoji, "ok", "thanks") before any processing
+- Stage 2: Routes everything else to queue — intent classification done by LLM, not keywords
+- Every message buffered to Redis rolling window (20 msgs, 2hr TTL) before triage decision
 
-### 2. **Silent Observer UX**
+### 2. Multi-Intent Extraction
+Supports 7 message intents, each with different extraction logic:
+- `NEW` — deadlines and tasks
+- `UPDATE` — corrections to existing tasks, with user confirmation before any DB write
+- `ANNOUNCEMENT` — venue changes, class cancellations, schedule shifts
+- `FORM_DEADLINE` — Google Form links with deadlines
+- `QA_PAIR` — questions and answers stored for repeated question detection
+- `CHITCHAT` / `QUERY` — dropped without LLM cost
+
+### 3. Agentic Context Retrieval
+- LLM reads incoming message and decides what DB context it needs
+- Fetches only active tasks (deadline not expired) from PostgreSQL
+- Combines with Redis rolling message window for full conversation context
+- Used to match UPDATE messages to correct existing tasks
+
+### 4. UPDATE Confirmation Flow
+- Every task update requires explicit user confirmation via DM
+- If wrong task matched, user can reject and agent re-queries excluding rejected tasks
+- Up to 2 re-retrieval rounds before graceful fallback
+- No data is mutated without user confirmation
+
+### 5. Multi-Round HITL (Human-in-the-Loop)
+- Missing fields trigger clarification DM to user
+- Redis lock persists state across messages (1hr TTL)
+- User reply routed back through pipeline with full saved context
+- Max 2 rounds, then offers to create as new task
+
+### 6. Silent Observer UX
 - Bot never replies in group chat
-- All notifications sent via private DM
+- All interactions via private DM only
 - Non-intrusive monitoring
 
-### 3. **Cross-Chat HITL (Human-in-the-Loop)**
-- If deadline is missing, bot asks user via DM
-- User replies in private chat
-- API Gateway intercepts reply and completes task
+### 7. Multi-Modal Processing
+- **Text**: LangGraph async pipeline with 7 intent types
+- **Images**: Gemini Vision with correct base64 encoding
+- **PDFs**: PyMuPDF OCR + LLM extraction
+- Both workers fan out tasks to all group subscribers atomically
 
-### 4. **Multi-Modal Processing**
-- **Text messages**: LangGraph workflow with intent classification
-- **Images**: Gemini Vision extracts tasks from screenshots
-- **PDFs**: OCR + LLM extracts tasks from documents
+## Text Extractor Agent Flow
 
-### 5. **Intelligent Reminders**
-- Cron job runs every 60 seconds
-- Sends DMs when deadlines arrive
-- Marks tasks as sent to avoid duplicates
+```mermaid
+graph TD
+    START([Start]) --> INTENT[intent_node]
+
+    INTENT -->|CHITCHAT / QUERY| END_NODE([End])
+    INTENT -->|QA_PAIR| QA[qa_store_node]
+    INTENT -->|NEW / UPDATE / ANNOUNCEMENT / FORM_DEADLINE| CONTEXT[context_node]
+
+    QA --> END_NODE
+
+    CONTEXT --> EXTRACT[extractor_node]
+    EXTRACT --> CRITIC[critic_node]
+
+    CRITIC -->|needs_human=False| END_NODE
+    CRITIC -->|needs_human=True, any hitl_reason| HITL[hitl_node]
+
+    HITL --> END_NODE
+
+    USER_REPLY([User DM Reply]) --> LOCK_CHECK{Check HITL Lock}
+
+    LOCK_CHECK -->|No lock found| IGNORE([Ignore])
+    LOCK_CHECK -->|hitl_reason=update_confirmation, reply=YES| DB_UPDATE[update_task_by_id]
+    LOCK_CHECK -->|hitl_reason=update_confirmation, reply=NO| RERETRIEVAL[hitl_reretrieval_node]
+    LOCK_CHECK -->|hitl_reason=low_match_confidence, reply=number| CONFIRM_LOOP[hitl_node]
+    LOCK_CHECK -->|hitl_reason=low_match_confidence, reply=description| RERETRIEVAL
+    LOCK_CHECK -->|hitl_reason=missing_field| MERGE[hitl_merge_node]
+
+    RERETRIEVAL --> CRITIC
+    CONFIRM_LOOP --> END_NODE
+    MERGE --> END_NODE
+    DB_UPDATE --> END_NODE
+```
 
 ## Project Structure
 
@@ -219,7 +253,7 @@ docker exec -it sieve_postgres psql -U user -d sieve
 SELECT * FROM tasks ORDER BY created_at DESC LIMIT 10;
 
 # View due tasks
-SELECT * FROM tasks WHERE deadline <= NOW() AND is_sent = FALSE;
+SELECT * FROM tasks WHERE deadline <= NOW() AND reminder_level < 3;
 ```
 
 ## Message Flow Examples
@@ -228,14 +262,16 @@ SELECT * FROM tasks WHERE deadline <= NOW() AND is_sent = FALSE;
 ```
 User in group: "Reminder: Submit hackathon project by Friday 11:59pm"
 ↓
-API Gateway: Keyword "hackathon" found → fast_text_queue
+API Gateway: Buffered → Two-stage triage → fast_text_queue
 ↓
-text_extractor: Intent=NEW → Context fetch → Extract → Validate
+text_extractor: Process and extract event details
 ↓
 PostgreSQL: Task saved with deadline
 ↓
 cron_notifier (when deadline arrives): Send DM to user
 ```
+
+> **Note**: For a deep dive into the LangGraph workflow and state management used by the Text Extractor, see [docs/TEXT_EXTRACTOR.md](docs/TEXT_EXTRACTOR.md).
 
 ### Example 2: Image with Task
 ```
@@ -286,8 +322,8 @@ docker exec -it sieve_rabbitmq rabbitmqctl list_queues
 
 ### Insert Test Task
 ```sql
-INSERT INTO tasks (user_id, group_id, title, action_required, deadline, is_sent)
-VALUES (123456, 789, 'Test Task', 'Complete testing', NOW() + INTERVAL '1 minute', FALSE);
+INSERT INTO tasks (user_id, group_id, title, action_required, deadline, reminder_level)
+VALUES (123456, 789, 'Test Task', 'Complete testing', NOW() + INTERVAL '1 minute', 0);
 ```
 
 ## Performance
@@ -297,7 +333,7 @@ VALUES (123456, 789, 'Test Task', 'Complete testing', NOW() + INTERVAL '1 minute
 | API Gateway latency | < 50ms |
 | Message processing | < 2s (text), < 5s (media) |
 | Reminder check interval | 60s |
-| Concurrent workers | Unlimited (horizontal scaling) |
+| Concurrent workers | 2-10 pods via K8s HPA, 10 concurrent messages per pod (aio_pika prefetch) |
 | Database connections | 10 per service |
 
 ## Security
@@ -338,13 +374,10 @@ docker-compose logs -f cron_notifier
 
 # Verify tasks exist
 docker exec -it sieve_postgres psql -U user -d sieve -c \
-  "SELECT * FROM tasks WHERE deadline <= NOW() AND is_sent = FALSE;"
+  "SELECT * FROM tasks WHERE deadline <= NOW() AND reminder_level < 3;"
 ```
 
 ## License
 
 MIT
-
----
-
-**Note:** This is a production-ready system. All workers are lean, async, and horizontally scalable. 
+

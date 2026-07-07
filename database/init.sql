@@ -19,15 +19,21 @@ CREATE INDEX IF NOT EXISTS idx_subscriptions_subscriber_id ON group_subscription
 -- Create tasks table
 CREATE TABLE IF NOT EXISTS tasks (
     id SERIAL PRIMARY KEY,
-    user_id BIGINT NOT NULL,  -- Subscriber who should receive reminders
+    user_id BIGINT NOT NULL,
     group_id BIGINT NOT NULL,
-    message_sender_id BIGINT,  -- Who sent the original message (optional)
-    title VARCHAR(255) NOT NULL,
-    action_required TEXT NOT NULL,
-    deadline TIMESTAMP WITH TIME ZONE,
-    reminder_level INTEGER DEFAULT 0,  -- 0: no reminders, 1: 24h sent, 2: 1h sent, 3: deadline sent
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    message_sender_id BIGINT,
+    title VARCHAR(500) NOT NULL,
+    action_required TEXT,
+    deadline TIMESTAMPTZ,
+    reminder_level INTEGER DEFAULT 0,
+    source_message_text TEXT,
+    message_type VARCHAR(50) DEFAULT 'deadline',
+    applies_at TIMESTAMPTZ,
+    location TEXT,
+    form_url TEXT,
+    reminder_strategy VARCHAR(20) DEFAULT 'standard',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- Create index on group_id for efficient filtering by group

@@ -2,7 +2,7 @@ from workers.text_extractor.graph.state import AgentState
 from workers.text_extractor.core.logger import logger
 from workers.text_extractor.core.metrics import hitl_triggers
 
-def critique_extraction(state: AgentState) -> AgentState:
+async def critique_extraction(state: AgentState) -> AgentState:
     extracted_data = state.get("extracted_data")
     
     logger.info("Critic Node started", extra={

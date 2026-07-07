@@ -14,7 +14,7 @@ async def sweep_and_notify():
     
     After level 3, tasks are archived (no more reminders).
     """
-    logger.info("🔄 Starting multi-level reminder sweep...")
+    logger.info(" Starting multi-level reminder sweep...")
     
     try:
         # Get all tasks across all reminder windows
@@ -24,7 +24,7 @@ async def sweep_and_notify():
             logger.info("✓ No due tasks found")
             return
         
-        logger.info(f"📋 Found {len(tasks)} task(s) across all windows")
+        logger.info(f" Found {len(tasks)} task(s) across all windows")
         
         # Process each task based on its window
         for task in tasks:
@@ -38,27 +38,27 @@ async def sweep_and_notify():
             
             # Determine message based on window
             if window == '24h':
-                emoji = "⏰"
+                emoji = ""
                 urgency = "24-Hour Warning"
                 next_level = 1
             elif window == '1h':
-                emoji = "🚨"
+                emoji = ""
                 urgency = "1-Hour Final Call"
                 next_level = 2
             else:  # 'now'
-                emoji = "🔴"
+                emoji = ""
                 urgency = "DEADLINE NOW"
                 next_level = 3
             
             # Format reminder message
             message = (
                 f"{emoji} <b>{urgency}</b>\n\n"
-                f"📌 <b>{title}</b>\n"
-                f"📝 {action_required}\n"
-                f"⏰ Deadline: {deadline.strftime('%Y-%m-%d %H:%M')}"
+                f" <b>{title}</b>\n"
+                f" {action_required}\n"
+                f" Deadline: {deadline.strftime('%Y-%m-%d %H:%M')}"
             )
             
-            logger.info(f"📤 Sending {window} reminder for task {task_id} to user {user_id}")
+            logger.info(f" Sending {window} reminder for task {task_id} to user {user_id}")
             
             # Send DM
             success = await send_telegram_dm(user_id, message)
@@ -69,7 +69,7 @@ async def sweep_and_notify():
                 if updated:
                     logger.info(f"✓ Task {task_id} updated to level {next_level}")
                 else:
-                    logger.warning(f"⚠ Failed to update task {task_id} level (DM was sent)")
+                    logger.warning(f" Failed to update task {task_id} level (DM was sent)")
             else:
                 logger.error(f"✗ Failed to send DM for task {task_id}")
         

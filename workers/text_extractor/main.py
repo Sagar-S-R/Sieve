@@ -1,227 +1,264 @@
-import pika
+import asyncio
+import aio_pika
 import json
 import logging
 import time
-import sys
-import asyncio
-import threading
 from prometheus_client import start_http_server
 from workers.text_extractor.core.config import settings
 from workers.text_extractor.core.metrics import workflow_duration
 from workers.text_extractor.graph.workflow import app
 from workers.text_extractor.graph.state import AgentState
-from workers.text_extractor.services.redis_client import check_hitl_lock, clear_hitl_lock
-from workers.text_extractor.services.database import save_task
+from workers.text_extractor.services.redis_client import (
+    check_hitl_lock, clear_hitl_lock,
+    is_message_processed, mark_message_processed
+)
+from workers.text_extractor.services.database import (
+    init_pool, close_pool, save_tasks_atomic,
+    get_group_subscribers, update_task_by_id, save_task
+)
+from workers.text_extractor.services.telegram_client import send_telegram_message
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-def process_message(ch, method, properties, body):
-    """Process message from RabbitMQ."""
-    logger.info(f"[x] Received {body.decode()}")
-    
-    workflow_start_time = time.time()
-    
-    try:
-        data = json.loads(body)
-        user_id = data.get("user_id", 0)
-        group_id = data.get("group_id")
-        message_id = data.get("message_id")
+async def process_message(message: aio_pika.IncomingMessage):
+    async with message.process(requeue=False):
+        workflow_start_time = time.time()
         
-        # CRITICAL: Check for duplicate message (idempotency)
-        if message_id and group_id:
-            from workers.text_extractor.services.redis_client import is_message_processed, mark_message_processed
-            
-            if is_message_processed(message_id, group_id):
-                logger.info(f"[!] Message {message_id} already processed. Skipping.")
-                ch.basic_ack(delivery_tag=method.delivery_tag)
-                return
-            
-            # Mark as processed immediately to prevent race conditions
-            mark_message_processed(message_id, group_id)
-        
-        # Check for HITL lock
-        saved_state = check_hitl_lock(user_id)
-        
-        if saved_state:
-            # User is replying to clarification request
-            logger.info(f"[HITL] Loading saved state for user {user_id}")
-            
-            group_id = saved_state.get("group_id")
-            
-            # Import merge node
-            from workers.text_extractor.nodes.hitl_merge_node import merge_hitl_clarification
-            
-            # Reconstruct state with saved data
-            state: AgentState = {
-                "user_id": user_id,  # Use the replying user's ID
-                "group_id": group_id,
-                "message_text": data.get("message_text", ""),  # User's clarification
-                "intent": "NEW",  # Force NEW intent
-                "db_context": saved_state.get("message_text", ""),  # Original message
-                "extracted_data": saved_state.get("extracted_data"),
-                "validation_error": None,
-                "needs_human": False,
-                "hitl_prompt": None
-            }
-            
-            # Merge clarification with original extraction
-            state = merge_hitl_clarification(state)
-            
-            # Skip workflow, go straight to saving
-            result = state
-        else:
-            # New message
-            state: AgentState = {
-                "user_id": user_id,
-                "group_id": data.get("group_id"),
-                "message_text": data.get("message_text", ""),
-                "intent": None,
-                "db_context": None,
-                "extracted_data": None,
-                "validation_error": None,
-                "needs_human": False,
-                "hitl_prompt": None
-            }
-            
-            # Run workflow
-            result = app.invoke(state)
-        
-        # Track workflow duration
-        workflow_duration.observe(time.time() - workflow_start_time)
-        
-        logger.info(f"[x] Workflow finished. Intent: {result.get('intent')}")
-        
-        if result.get("needs_human"):
-            logger.info(f"[!] HITL triggered for user {result.get('user_id')}")
-        elif result.get("intent") == "NEW" and not result.get("needs_human"):
-            # Check if this is a group update (correction message)
-            if result.get('is_update') and result.get('updating_task_title'):
-                # This is a correction message - update existing tasks
-                logger.info(f"[UPDATE] Detected correction for task: {result.get('updating_task_title')}")
-                
-                extracted_data = result.get('extracted_data')
-                group_id = result.get('group_id')
-                
-                if extracted_data and group_id:
-                    from workers.text_extractor.services.database import update_tasks_by_title_and_group
-                    from workers.text_extractor.core.timezone_utils import format_deadline_ist
-                    from workers.text_extractor.services.telegram_client import send_telegram_message
-                    
-                    # Update all subscribers' tasks
-                    updated_count = asyncio.run(update_tasks_by_title_and_group(
-                        group_id=group_id,
-                        title=result.get('updating_task_title'),
-                        new_deadline=extracted_data.deadline
-                    ))
-                    
-                    logger.info(f"[UPDATE] Updated {updated_count} tasks")
-                    
-                    # Send confirmation to group
-                    if updated_count > 0:
-                        response = f"✅ Updated deadline for \"{result.get('updating_task_title')}\"\n"
-                        response += f"New deadline: {format_deadline_ist(extracted_data.deadline)}\n"
-                        response += f"📊 Updated for {updated_count} subscriber(s)"
-                        
-                        asyncio.run(send_telegram_message(group_id, response))
-                        logger.info(f"[UPDATE] Confirmation sent to group")
-                    else:
-                        logger.warning(f"[UPDATE] No tasks found to update, proceeding with normal flow")
-                        # Fall through to normal task creation
-                        result['is_update'] = False
-            
-            # Normal task creation (if not an update, or update found no tasks)
-            if not result.get('is_update'):
-                # Save task
-                extracted_data = result.get('extracted_data')
-            group_id = result.get('group_id')
-            message_sender_id = result.get('user_id')
-            
-            if extracted_data and group_id:
-                # Check if this is a HITL resolution (saved_state exists)
-                if saved_state:
-                    # HITL resolution: Save task ONLY for the user who replied
-                    task_data = {
-                        'user_id': user_id,  # Only the replying user
-                        'group_id': group_id,
-                        'message_sender_id': message_sender_id,
-                        'title': extracted_data.title,
-                        'action_required': extracted_data.action_required,
-                        'deadline': extracted_data.deadline
-                    }
-                    asyncio.run(save_task(task_data))
-                    logger.info(f"[✓] HITL resolved: Task saved for user {user_id}")
-                    
-                    # Clear lock only for this user
-                    clear_hitl_lock(user_id)
-                    logger.info(f"[✓] HITL lock cleared for user {user_id}")
-                else:
-                    # Normal flow: Save task for ALL subscribers atomically
-                    from workers.text_extractor.services.database import get_group_subscribers, save_tasks_atomic
-                    subscribers = asyncio.run(get_group_subscribers(group_id))
-                    
-                    if subscribers:
-                        logger.info(f"[✓] Found {len(subscribers)} subscriber(s) for group {group_id}")
-                        
-                        # CRITICAL: Atomic transaction - all tasks created or none
-                        try:
-                            task_ids = asyncio.run(save_tasks_atomic(
-                                subscribers=subscribers,
-                                group_id=group_id,
-                                message_sender_id=message_sender_id,
-                                title=extracted_data.title,
-                                action_required=extracted_data.action_required,
-                                deadline=extracted_data.deadline
-                            ))
-                            logger.info(f"[✓] {len(task_ids)} tasks created atomically")
-                        except Exception as e:
-                            logger.error(f"[✗] Atomic task creation failed: {e}")
-                    else:
-                        logger.warning(f"[!] No subscribers found for group {group_id}")
-        
-        ch.basic_ack(delivery_tag=method.delivery_tag)
-        
-    except Exception as e:
-        logger.error(f"[x] Error: {e}", exc_info=True)
-        ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
-
-
-def connect_to_rabbitmq():
-    """Connect to RabbitMQ with retry."""
-    max_retries = settings.RABBITMQ_MAX_RETRIES
-    initial_delay = settings.RABBITMQ_INITIAL_RETRY_DELAY
-    
-    for attempt in range(1, max_retries + 1):
         try:
-            logger.info(f"[*] Connecting to RabbitMQ (attempt {attempt}/{max_retries})...")
-            connection = pika.BlockingConnection(pika.URLParameters(settings.RABBITMQ_URL))
-            channel = connection.channel()
-            channel.queue_declare(queue='fast_text_queue', durable=True)
-            logger.info("[✓] Connected to RabbitMQ")
-            return connection, channel
+            data = json.loads(message.body)
+            user_id = data.get("user_id", 0)
+            group_id = data.get("group_id")
+            message_id = data.get("message_id")
+            
+            # Idempotency check
+            if message_id and group_id:
+                if is_message_processed(message_id, group_id):
+                    logger.info(f"[!] Message {message_id} already processed. Skipping.")
+                    return
+                mark_message_processed(message_id, group_id)
+            
+            # Check HITL lock
+            saved_state = check_hitl_lock(user_id)
+            
+            if saved_state:
+                await handle_hitl_resolution(user_id, group_id, data, saved_state)
+            else:
+                await handle_new_message(user_id, group_id, data)
+            
+            workflow_duration.observe(time.time() - workflow_start_time)
+        
         except Exception as e:
-            logger.error(f"[x] Connection failed: {e}")
-            if attempt == max_retries:
-                logger.critical("[!] Max retries exhausted. Exiting.")
-                sys.exit(1)
-            delay = initial_delay * (2 ** (attempt - 1))
-            logger.info(f"[*] Retrying in {delay} seconds...")
-            time.sleep(delay)
+            logger.error(f"[x] Error processing message: {e}", exc_info=True)
+            raise  # aio_pika will nack
 
 
-def main():
-    # Start Prometheus metrics server
-    metrics_port = getattr(settings, 'PROMETHEUS_PORT', 8001)
-    start_http_server(metrics_port)
-    logger.info(f"[✓] Prometheus metrics exposed on port {metrics_port}")
+async def handle_new_message(user_id: int, group_id: int, data: dict):
+    state: AgentState = {
+        "user_id": user_id,
+        "group_id": group_id,
+        "message_text": data.get("message_text", ""),
+        "original_message": data.get("message_text", ""),
+        "triage_signal": data.get("triage_signal"),
+        "intent": None,
+        "message_buffer": None,
+        "db_context": None,
+        "context_retrieval_reasoning": None,
+        "extracted_data": None,
+        "validation_error": None,
+        "needs_human": False,
+        "hitl_prompt": None,
+        "hitl_reason": None,
+        "hitl_round": 0,
+        "is_update": None,
+        "update_candidates": None,
+        "selected_task_id": None,
+        "updating_task_title": None,
+        "excluded_task_ids": [],
+        "venue_info": None,
+        "schedule_change_info": None,
+        "announcement_text": None
+    }
     
-    connection, channel = connect_to_rabbitmq()
-    logger.info('[*] Waiting for messages. To exit press CTRL+C')
-    channel.basic_qos(prefetch_count=1)
-    channel.basic_consume(queue='fast_text_queue', on_message_callback=process_message)
-    channel.start_consuming()
+    result = await app.ainvoke(state)
+    await handle_result(result, saved_state=None)
+
+
+async def handle_hitl_resolution(user_id: int, group_id: int, data: dict, saved_state: dict):
+    hitl_reason = saved_state.get("hitl_reason")
+    user_reply = data.get("message_text", "").lower().strip()
+    saved_group_id = saved_state.get("group_id")
+    
+    if hitl_reason == "update_confirmation":
+        if any(w in user_reply for w in ["yes", "", "confirm", "correct", "yeah", "yep", "y"]):
+            # User confirmed — execute update
+            task_id = saved_state.get("proposed_task_id")
+            new_deadline = saved_state.get("proposed_new_value")
+            if task_id and new_deadline:
+                await update_task_by_id(task_id, new_deadline=new_deadline)
+                clear_hitl_lock(user_id)
+                await send_telegram_message(saved_group_id, " Task updated successfully.")
+                logger.info(f"[UPDATE] Task {task_id} updated by user {user_id}")
+        
+        elif any(w in user_reply for w in ["no", "", "wrong", "nope", "n"]):
+            # User rejected — move proposed task to excluded, re-trigger HITL
+            excluded = saved_state.get("excluded_task_ids", [])
+            proposed = saved_state.get("proposed_task_id")
+            if proposed and proposed not in excluded:
+                excluded.append(proposed)
+            saved_state["excluded_task_ids"] = excluded
+            saved_state["hitl_reason"] = "low_match_confidence"
+            saved_state["hitl_round"] = saved_state.get("hitl_round", 1)
+            
+            # Re-run reretrieval
+            state = _build_state_from_saved(user_id, data, saved_state)
+            result = await app.ainvoke(state)
+            await handle_result(result, saved_state=saved_state)
+    
+    elif hitl_reason == "low_match_confidence":
+        candidates = saved_state.get("update_candidates", [])
+        
+        if user_reply.isdigit():
+            idx = int(user_reply) - 1
+            if 0 <= idx < len(candidates):
+                picked = candidates[idx]
+                # Ask confirmation for picked task
+                saved_state["proposed_task_id"] = picked["id"]
+                saved_state["hitl_reason"] = "update_confirmation"
+                state = _build_state_from_saved(user_id, data, saved_state)
+                result = await app.ainvoke(state)
+                await handle_result(result, saved_state=saved_state)
+            else:
+                from workers.text_extractor.services.telegram_client import send_dm
+                await send_dm(user_id, "Invalid number. Please reply with a valid option number.")
+        else:
+            # User described something new — reretrieval with new context
+            saved_state["hitl_round"] = saved_state.get("hitl_round", 1) + 1
+            if saved_state["hitl_round"] > 2:
+                clear_hitl_lock(user_id)
+                from workers.text_extractor.services.telegram_client import send_dm
+                await send_dm(user_id,
+                    "I couldn't find the right task. Want me to create this as a new task instead? Reply 'yes' or 'no'.")
+                return
+            state = _build_state_from_saved(user_id, data, saved_state)
+            result = await app.ainvoke(state)
+            await handle_result(result, saved_state=saved_state)
+    
+    else:
+        # missing field resolution (missing_deadline, missing_location, missing_url)
+        from workers.text_extractor.nodes.hitl_merge_node import merge_hitl_clarification
+        state = _build_state_from_saved(user_id, data, saved_state)
+        state = await merge_hitl_clarification(state)
+        await handle_result(state, saved_state=saved_state)
+
+
+def _build_state_from_saved(user_id: int, data: dict, saved_state: dict) -> AgentState:
+    return {
+        "user_id": user_id,
+        "group_id": saved_state.get("group_id"),
+        "message_text": data.get("message_text", ""),
+        "original_message": saved_state.get("original_message", ""),
+        "triage_signal": None,
+        "intent": saved_state.get("intent", "UPDATE"),
+        "message_buffer": saved_state.get("message_buffer"),
+        "db_context": saved_state.get("db_context"),
+        "context_retrieval_reasoning": saved_state.get("context_retrieval_reasoning"),
+        "extracted_data": saved_state.get("extracted_data"),
+        "validation_error": None,
+        "needs_human": False,
+        "hitl_prompt": None,
+        "hitl_reason": saved_state.get("hitl_reason"),
+        "hitl_round": saved_state.get("hitl_round", 1),
+        "is_update": None,
+        "update_candidates": saved_state.get("update_candidates", []),
+        "selected_task_id": saved_state.get("proposed_task_id"),
+        "updating_task_title": None,
+        "excluded_task_ids": saved_state.get("excluded_task_ids", []),
+        "venue_info": None,
+        "schedule_change_info": None,
+        "announcement_text": None
+    }
+
+
+async def handle_result(result: dict, saved_state: dict):
+    if result.get("needs_human"):
+        logger.info(f"[HITL] Triggered for user {result.get('user_id')}, reason: {result.get('hitl_reason')}")
+        return
+    
+    intent = result.get("intent")
+    extracted = result.get("extracted_data")
+    group_id = result.get("group_id")
+    user_id = result.get("user_id")
+    
+    if intent == "UPDATE" and result.get("selected_task_id"):
+        task_id = result.get("selected_task_id")
+        if extracted and extracted.deadline:
+            await update_task_by_id(task_id, new_deadline=extracted.deadline)
+            clear_hitl_lock(user_id)
+            await send_telegram_message(group_id, " Task updated successfully.")
+    
+    elif intent in ["NEW", "ANNOUNCEMENT", "RESOURCE_CALLOUT"] and extracted:
+        if saved_state:
+            # HITL resolution — save for replying user only
+            await save_task({
+                "user_id": user_id,
+                "group_id": group_id,
+                "message_sender_id": user_id,
+                "title": extracted.title,
+                "action_required": extracted.action_required,
+                "deadline": extracted.deadline,
+                "source_message_text": result.get("original_message"),
+                "message_type": extracted.message_type,
+                "applies_at": extracted.applies_at,
+                "location": extracted.location,
+                "form_url": extracted.form_url,
+                "reminder_strategy": extracted.reminder_strategy,
+            })
+            clear_hitl_lock(user_id)
+        else:
+            # Normal flow — save for all subscribers atomically
+            subscribers = await get_group_subscribers(group_id)
+            if subscribers:
+                await save_tasks_atomic(
+                    subscribers=subscribers,
+                    group_id=group_id,
+                    message_sender_id=user_id,
+                    title=extracted.title,
+                    action_required=extracted.action_required,
+                    deadline=extracted.deadline,
+                    source_message_text=result.get("original_message"),
+                    message_type=extracted.message_type,
+                    applies_at=extracted.applies_at,
+                    location=extracted.location,
+                    form_url=extracted.form_url,
+                    reminder_strategy=extracted.reminder_strategy,
+                )
+                logger.info(f"[✓] Tasks saved for {len(subscribers)} subscribers")
+
+
+async def main():
+    # Start Prometheus
+    start_http_server(getattr(settings, 'PROMETHEUS_PORT', 8001))
+    logger.info("[✓] Prometheus metrics exposed")
+    
+    # Init DB pool
+    await init_pool()
+    logger.info("[✓] DB connection pool initialized")
+    
+    # Connect RabbitMQ
+    connection = await aio_pika.connect_robust(settings.RABBITMQ_URL)
+    channel = await connection.channel()
+    await channel.set_qos(prefetch_count=10)  # 10 concurrent messages per pod
+    queue = await channel.declare_queue('fast_text_queue', durable=True)
+    await queue.consume(process_message)
+    
+    logger.info("[✓] Consuming from fast_text_queue. Press CTRL+C to exit.")
+    await asyncio.Future()  # run forever
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("[!] Shutting down...")

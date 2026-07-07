@@ -1,3 +1,4 @@
+import base64
 from workers.media_extractor.graph.state import AgentState
 from workers.media_extractor.core.vision_llm import llm
 from shared.schemas import EventExtraction
@@ -28,7 +29,7 @@ def extract_from_image(state: AgentState) -> AgentState:
             },
             {
                 "type": "image_url",
-                "image_url": f"data:image/jpeg;base64,{image_data.hex()}"
+                "image_url": f"data:image/jpeg;base64,{base64.b64encode(image_data).decode('utf-8')}"
             }
         ]
     )

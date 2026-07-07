@@ -8,3 +8,13 @@ class EventExtraction(BaseModel):
     deadline: Optional[str] = Field(default=None, description="The deadline for the task or event in ISO-8601 format.")
     confidence_score: float = Field(description="Confidence score from 0.0 to 1.0 of the extraction accuracy.")
     needs_clarification: bool = Field(description="True if crucial information like the deadline is missing or ambiguous.", default=False)
+    
+    # NEW FIELDS for redesign
+    message_type: str = Field(default="deadline", description="Type of message: deadline, announcement, form_deadline, qa_pair")
+    applies_at: Optional[str] = Field(default=None, description="When the event happens (class time, meeting time) in ISO-8601 format. Different from deadline.")
+    location: Optional[str] = Field(default=None, description="Venue, room, lab, block where the event happens.")
+    form_url: Optional[str] = Field(default=None, description="Google Form or other URL if this is a form submission task.")
+    reminder_strategy: str = Field(default="standard", description="Reminder strategy: standard (24h, 1h, deadline) | morning_of (8am day-of) | immediate (DM right away)")
+    question_text: Optional[str] = Field(default=None, description="For qa_pair type: the question being asked.")
+    answer_text: Optional[str] = Field(default=None, description="For qa_pair type: the answer provided.")
+    match_confidence: Optional[float] = Field(default=None, description="For UPDATE intent: confidence that we matched the right existing task (0.0-1.0).")

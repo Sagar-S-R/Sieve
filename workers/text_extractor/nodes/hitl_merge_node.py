@@ -6,7 +6,7 @@ from shared.schemas import EventExtraction
 import json
 
 
-def merge_hitl_clarification(state: AgentState) -> AgentState:
+async def merge_hitl_clarification(state: AgentState) -> AgentState:
     """
     Merge user's clarification with original extracted data.
     Uses LLM to parse the clarification and update the extraction.
@@ -67,7 +67,7 @@ Respond with ONLY a JSON object (no explanations):
 }}"""
     
     try:
-        response = llm.invoke(prompt)
+        response = await llm.ainvoke(prompt)
         
         # Parse JSON from response
         content = response.content.strip()

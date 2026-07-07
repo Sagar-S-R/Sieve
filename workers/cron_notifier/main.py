@@ -10,7 +10,7 @@ async def job_wrapper():
     try:
         await sweep_and_notify()
     except Exception as e:
-        logger.error(f"❌ Job execution failed: {e}", exc_info=True)
+        logger.error(f" Job execution failed: {e}", exc_info=True)
 
 
 async def main():
@@ -20,7 +20,7 @@ async def main():
     Initializes the database pool and starts the scheduler
     to run reminder sweeps every 60 seconds.
     """
-    logger.info("🚀 Starting cron_notifier...")
+    logger.info(" Starting cron_notifier...")
     
     # Initialize database connection pool
     await init_pool()
@@ -44,7 +44,7 @@ async def main():
     logger.info("✓ Scheduler started (running every 60 seconds)")
     
     # Run once immediately on startup
-    logger.info("🔄 Running initial sweep...")
+    logger.info(" Running initial sweep...")
     await job_wrapper()
     
     try:
@@ -52,7 +52,7 @@ async def main():
         while True:
             await asyncio.sleep(1)
     except (KeyboardInterrupt, SystemExit):
-        logger.info("🛑 Shutting down...")
+        logger.info(" Shutting down...")
         scheduler.shutdown()
         await close_pool()
         logger.info("✓ Shutdown complete")
