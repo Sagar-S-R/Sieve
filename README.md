@@ -17,7 +17,7 @@ graph TD
     TRIAGE -->|Media messages| RMQ
     TRIAGE -->|HITL reply| REDIS[Redis<br/>Caching · HITL Locks<br/>Message Buffer]
     
-    RMQ -->|fast_text_queue<br/>(is_personal=True/False)| TE[Text Extractor<br/>LangGraph]
+    RMQ -->|fast_text_queue| TE[Text Extractor<br/>LangGraph]
     RMQ -->|heavy_media_queue| ME[Media Extractor<br/>Vision + OCR]
     
     REDIS -->|State Management| TE
@@ -65,12 +65,12 @@ Supports 7 message intents, each with different extraction logic:
 
 **Group HITL:**
 Bot sends clarification to GROUP chat
-"📋 Task detected — what's the deadline? Reply to THIS message"
+"Task detected — what's the deadline? Reply to THIS message"
 First valid reply wins, lock cleared
 
 **Personal HITL:**
 Bot sends clarification via PRIVATE DM
-"📋 Got it — when should I remind you? Reply to THIS message"
+"Got it — when should I remind you? Reply to THIS message"
 User replies in same private chat
 
 - Redis lock persists state across messages (1hr TTL)
