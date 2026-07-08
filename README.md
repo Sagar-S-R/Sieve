@@ -8,7 +8,8 @@
 graph TD
     TG([Telegram Users]) -->|Webhook| GW[API Gateway<br/>FastAPI]
     
-    GW --> BUF[Raw Message Buffer<br/>Redis Rolling Window<br/>20 msgs · 2hr TTL]
+    GW -->|Personal DM| RMQ
+    GW -->|Group Message| BUF[Raw Message Buffer<br/>Redis Rolling Window<br/>20 msgs · 2hr TTL]
     
     BUF --> TRIAGE[Two-Stage Triage<br/>Stage 1: Drop pure noise<br/>Stage 2: Route everything else]
     
@@ -16,13 +17,13 @@ graph TD
     TRIAGE -->|Media messages| RMQ
     TRIAGE -->|HITL reply| REDIS[Redis<br/>Caching · HITL Locks<br/>Message Buffer]
     
-    RMQ -->|fast_text_queue| TE[Text Extractor<br/>LangGraph]
+    RMQ -->|fast_text_queue<br/>(is_personal=True/False)| TE[Text Extractor<br/>LangGraph]
     RMQ -->|heavy_media_queue| ME[Media Extractor<br/>Vision + OCR]
     
     REDIS -->|State Management| TE
     REDIS -->|State Management| ME
     
-    TE --> DB[PostgreSQL<br/>Task Storage]
+    TE -->|Group/Personal Task| DB[PostgreSQL<br/>Task Storage]
     ME --> DB
     
     DB -->|Poll Deadlines| CRON[Cron Notifier<br/>60s Loop]
@@ -61,7 +62,17 @@ Supports 7 message intents, each with different extraction logic:
 - No data is mutated without user confirmation
 
 ### 5. Multi-Round HITL (Human-in-the-Loop)
-- Missing fields trigger clarification DM to user
+
+**Group HITL:**
+Bot sends clarification to GROUP chat
+"📋 Task detected — what's the deadline? Reply to THIS message"
+First valid reply wins, lock cleared
+
+**Personal HITL:**
+Bot sends clarification via PRIVATE DM
+"📋 Got it — when should I remind you? Reply to THIS message"
+User replies in same private chat
+
 - Redis lock persists state across messages (1hr TTL)
 - User reply routed back through pipeline with full saved context
 - Max 2 rounds, then offers to create as new task
@@ -75,7 +86,20 @@ Supports 7 message intents, each with different extraction logic:
 - **Text**: LangGraph async pipeline with 7 intent types
 - **Images**: Gemini Vision with correct base64 encoding
 - **PDFs**: PyMuPDF OCR + LLM extraction
-- Both workers fan out tasks to all group subscribers atomically
+- Both workers save one task per group message — subscribers resolved at reminder time via JOIN
+
+### 8. Personal Reminders via DM
+- Users can DM the bot directly to set personal reminders
+- "Remind me to meet my friend on Saturday 6pm"
+- Saved for that user only — not shared with any group
+- Same HITL flow applies — bot asks for missing info in DM
+
+### 9. Group-Level Task Storage
+- One task row per group message (not per subscriber)
+- Eliminates 60x write amplification for large groups
+- Subscribers resolved at reminder time via JOIN query
+- 60x reduction in database storage for active groups
+
 
 ## Text Extractor Agent Flow
 
@@ -89,7 +113,7 @@ graph TD
 
     QA --> END_NODE
 
-    CONTEXT --> EXTRACT[extractor_node]
+    CONTEXT -->|Note: Personal tasks skip DB fetch| EXTRACT[extractor_node]
     EXTRACT --> CRITIC[critic_node]
 
     CRITIC -->|needs_human=False| END_NODE
@@ -174,6 +198,19 @@ Sieve/
 | **Vision/OCR** | Gemini 2.0 Flash, PyMuPDF |
 | **Scheduler** | APScheduler |
 | **HTTP Client** | httpx |
+
+## Database Design
+
+### Tasks Table
+One row per message — either group or personal:
+- `group_id` — set for group tasks, NULL for personal
+- `user_id` — set for personal tasks, NULL for group
+- Constraint: at least one of `user_id` or `group_id` must be set
+
+### Reminder Strategy
+- `standard` — 24hr, 1hr, deadline alerts
+- `morning_of` — 7am on the day (announcements)
+- `immediate` — fire right now (same-day changes)
 
 ## Quick Start
 
@@ -301,6 +338,21 @@ API Gateway: HITL lock found → Merge answer → Save task
 Telegram DM: "Task saved!"
 ```
 
+### Example 4: Personal DM Reminder
+```
+User DMs bot: "Remind me to submit my portfolio by Friday 11pm"
+↓
+API Gateway: Private chat detected, not a command → fast_text_queue (is_personal=True)
+↓
+text_extractor: Extracts title, deadline, skips group context fetch
+↓
+PostgreSQL: Task saved with user_id set, group_id NULL
+↓
+cron_notifier: UNION ALL query finds personal task → DM sent to user
+↓
+User gets reminded: "⏰ Submit portfolio — due in 24 hours"
+```
+
 ## Testing
 
 ### Manual Testing
@@ -322,8 +374,13 @@ docker exec -it sieve_rabbitmq rabbitmqctl list_queues
 
 ### Insert Test Task
 ```sql
-INSERT INTO tasks (user_id, group_id, title, action_required, deadline, reminder_level)
-VALUES (123456, 789, 'Test Task', 'Complete testing', NOW() + INTERVAL '1 minute', 0);
+-- Test group task
+INSERT INTO tasks (group_id, message_sender_id, title, action_required, deadline, reminder_level)
+VALUES (-100123456789, 123456, 'Test Group Task', 'Complete testing', NOW() + INTERVAL '1 minute', 0);
+
+-- Test personal task
+INSERT INTO tasks (user_id, message_sender_id, title, action_required, deadline, reminder_level)
+VALUES (123456, 123456, 'Test Personal Task', 'Complete testing', NOW() + INTERVAL '1 minute', 0);
 ```
 
 ## Performance

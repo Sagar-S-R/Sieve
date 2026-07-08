@@ -163,8 +163,7 @@ storybook-static/
 # ============================================================================
 
 # MDs and TODO Archive file (contains removed TODO items from cleanup)
-123.md
-pdf.md
+
 AGENT.md
 CLAUDE.md
 cleanup.md
