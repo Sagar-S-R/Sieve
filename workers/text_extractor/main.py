@@ -62,11 +62,14 @@ async def process_message(message: aio_pika.IncomingMessage):
 
 
 async def handle_new_message(user_id: int, group_id: int, data: dict):
+    is_personal = data.get("is_personal", False)
+
     state: AgentState = {
         "user_id": user_id,
         "group_id": group_id,
         "message_text": data.get("message_text", ""),
         "original_message": data.get("message_text", ""),
+        "is_personal": is_personal,
         "triage_signal": data.get("triage_signal"),
         "intent": None,
         "message_buffer": None,
@@ -169,6 +172,7 @@ def _build_state_from_saved(user_id: int, data: dict, saved_state: dict) -> Agen
         "group_id": saved_state.get("group_id"),
         "message_text": data.get("message_text", ""),
         "original_message": saved_state.get("original_message", ""),
+        "is_personal": saved_state.get("is_personal", False),
         "triage_signal": None,
         "intent": saved_state.get("intent", "UPDATE"),
         "message_buffer": saved_state.get("message_buffer"),
@@ -200,6 +204,7 @@ async def handle_result(result: dict, saved_state: dict, is_group_hitl: bool):
     extracted = result.get("extracted_data")
     group_id = result.get("group_id")
     user_id = result.get("user_id")
+    is_personal = result.get("is_personal", False)
 
     if intent == "UPDATE" and result.get("selected_task_id"):
         task_id = result.get("selected_task_id")
@@ -209,22 +214,44 @@ async def handle_result(result: dict, saved_state: dict, is_group_hitl: bool):
             await send_telegram_message(group_id, "Task updated successfully.")
 
     elif intent in ["NEW", "ANNOUNCEMENT", "RESOURCE_CALLOUT"] and extracted:
-        await save_task({
-            "group_id": group_id,
-            "message_sender_id": user_id,
-            "title": extracted.title,
-            "action_required": extracted.action_required,
-            "deadline": extracted.deadline,
-            "source_message_text": result.get("original_message"),
-            "message_type": extracted.message_type,
-            "applies_at": extracted.applies_at,
-            "location": extracted.location,
-            "form_url": extracted.form_url,
-            "reminder_strategy": extracted.reminder_strategy,
-        })
-        if saved_state:
-            _clear_hitl(user_id, group_id, is_group_hitl)
-        logger.info(f"[OK] Task saved for group {group_id}")
+        if is_personal:
+            await save_task({
+                "user_id": user_id,
+                "group_id": None,
+                "message_sender_id": user_id,
+                "title": extracted.title,
+                "action_required": extracted.action_required,
+                "deadline": extracted.deadline,
+                "source_message_text": result.get("original_message"),
+                "message_type": extracted.message_type,
+                "applies_at": extracted.applies_at,
+                "location": extracted.location,
+                "form_url": extracted.form_url,
+                "reminder_strategy": extracted.reminder_strategy,
+            })
+            if saved_state:
+                _clear_hitl(user_id, group_id, is_group_hitl)
+            deadline_str = str(extracted.deadline) if extracted.deadline else "no deadline set"
+            await send_telegram_message(user_id, f"Reminder set: *{extracted.title}*\n{deadline_str}")
+            logger.info(f"[OK] Personal task saved for user {user_id}")
+        else:
+            await save_task({
+                "user_id": None,
+                "group_id": group_id,
+                "message_sender_id": user_id,
+                "title": extracted.title,
+                "action_required": extracted.action_required,
+                "deadline": extracted.deadline,
+                "source_message_text": result.get("original_message"),
+                "message_type": extracted.message_type,
+                "applies_at": extracted.applies_at,
+                "location": extracted.location,
+                "form_url": extracted.form_url,
+                "reminder_strategy": extracted.reminder_strategy,
+            })
+            if saved_state:
+                _clear_hitl(user_id, group_id, is_group_hitl)
+            logger.info(f"[OK] Group task saved for group {group_id}")
 
 
 async def main():

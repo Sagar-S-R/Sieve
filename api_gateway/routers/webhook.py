@@ -428,22 +428,36 @@ async def telegram_webhook(request: Request):
             if hitl_lock:
                 # User is responding to clarification request
                 print(f"[HITL] User {user_id} responding to clarification")
-                
-                # Send the user's response back to text_extractor for processing
-                # The worker will merge the clarification with saved state
+
                 payload = {
                     "user_id": user_id,
                     "group_id": hitl_lock.get("group_id"),
                     "message_text": text,
-                    "is_hitl_response": True  # Flag to indicate this is a HITL response
+                    "is_hitl_response": True,
+                    "is_personal": hitl_lock.get("is_personal", False),
+                    "saved_state": hitl_lock
                 }
-                
+
                 print(f"[HITL] Routing clarification to text_extractor")
                 await publish_to_queue("fast_text_queue", payload)
-                
+
                 return {"status": "ok"}
-            
-            # No HITL lock - ignore private messages for now
+
+            # Not a command and no HITL lock — treat as personal task creation
+            if text and not text.startswith("/"):
+                message_id = message.get("message_id")
+                payload = {
+                    "user_id": user_id,
+                    "group_id": None,
+                    "message_id": message_id,
+                    "message_text": text,
+                    "is_personal": True,
+                    "is_hitl_response": False,
+                }
+                await publish_to_queue("fast_text_queue", payload)
+                print(f"[PERSONAL] Task request from user {user_id}: {text[:50]}")
+                return {"status": "ok"}
+
             return {"status": "ok"}
         
         # ============================================

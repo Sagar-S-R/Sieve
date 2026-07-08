@@ -3,35 +3,42 @@ from shared.schemas import EventExtraction
 
 
 class AgentState(TypedDict):
-    # Core message info
+    # Core
     user_id: int
     group_id: Optional[int]
     message_text: str
-    triage_signal: Optional[str]        # "high_signal" | "low_signal" (from triage)
+    original_message: Optional[str]
+    is_personal: bool                        # True for private DM tasks, False for group
 
-    # Intent classification
-    # NEW, UPDATE, CORRECTION, CHITCHAT, QUERY,
-    # VENUE_CHANGE, LAB_CALLOUT, SCHEDULE_CHANGE, RESOURCE_CALLOUT, GROUP_ANNOUNCEMENT
+    # Intent
     intent: Optional[str]
+    triage_signal: Optional[str]
 
-    # NEW: Rolling message buffer and agentic context
-    message_buffer: Optional[List[str]]  # Last 20 raw messages from this group
-    db_context: Optional[str]  # Context fetched from DB (based on LLM decision)
-    context_retrieval_reasoning: Optional[str]  # Why the LLM chose this context
+    # Context
+    message_buffer: Optional[List[str]]
+    db_context: Optional[str]
+    context_retrieval_reasoning: Optional[str]
 
-    # LangGraph pipeline state
+    # Extraction
     extracted_data: Optional[EventExtraction]
-    validation_error: Optional[str]
-    needs_human: bool
-    hitl_prompt: Optional[str]
 
-    # Update / correction flow with confirmation
-    is_update: Optional[bool]
-    update_candidates: Optional[List[dict]]  # List of potential matching tasks
-    selected_task_id: Optional[int]  # Task ID user confirmed to update
+    # Update flow
+    update_candidates: Optional[List[dict]]
+    excluded_task_ids: Optional[List[int]]
+    selected_task_id: Optional[int]
     updating_task_title: Optional[str]
 
-    # New intent payloads
-    venue_info: Optional[dict]           # {old_venue, new_venue, task_title}
-    schedule_change_info: Optional[dict] # {change_type: "cancelled"|"postponed", target}
-    announcement_text: Optional[str]     # For GROUP_ANNOUNCEMENT forwarding
+    # HITL
+    needs_human: bool
+    hitl_reason: Optional[str]
+    hitl_prompt: Optional[str]
+    hitl_round: int
+
+    # Validation
+    validation_error: Optional[str]
+
+    # Legacy payloads (group intents)
+    is_update: Optional[bool]
+    venue_info: Optional[dict]
+    schedule_change_info: Optional[dict]
+    announcement_text: Optional[str]

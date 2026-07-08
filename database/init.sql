@@ -1,5 +1,6 @@
 -- Database initialization script for Sieve
--- One task row per group message. Subscribers joined at reminder time.
+-- Tasks are either group tasks (group_id set) or personal tasks (user_id set).
+-- CHECK constraint ensures at least one is present.
 
 CREATE TABLE IF NOT EXISTS group_subscriptions (
     id SERIAL PRIMARY KEY,
@@ -11,7 +12,8 @@ CREATE TABLE IF NOT EXISTS group_subscriptions (
 
 CREATE TABLE IF NOT EXISTS tasks (
     id SERIAL PRIMARY KEY,
-    group_id BIGINT NOT NULL,
+    group_id BIGINT,                          -- NULL for personal tasks
+    user_id BIGINT,                           -- NULL for group tasks
     message_sender_id BIGINT,
     title VARCHAR(500) NOT NULL,
     action_required TEXT,
@@ -24,12 +26,17 @@ CREATE TABLE IF NOT EXISTS tasks (
     form_url TEXT,
     reminder_strategy VARCHAR(20) DEFAULT 'standard',
     created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW()
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    CONSTRAINT chk_task_owner CHECK (
+        user_id IS NOT NULL OR group_id IS NOT NULL
+    )
 );
 
 CREATE INDEX IF NOT EXISTS idx_tasks_group_id ON tasks(group_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_user_id ON tasks(user_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_deadline ON tasks(deadline) WHERE reminder_level < 3;
 CREATE INDEX IF NOT EXISTS idx_tasks_group_deadline ON tasks(group_id, deadline);
+CREATE INDEX IF NOT EXISTS idx_tasks_user_deadline ON tasks(user_id, deadline);
 CREATE INDEX IF NOT EXISTS idx_subscriptions_group ON group_subscriptions(group_id);
 
 -- Trigger to auto-update updated_at

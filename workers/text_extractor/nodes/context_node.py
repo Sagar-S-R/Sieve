@@ -19,19 +19,28 @@ async def fetch_context_agentic(state: AgentState) -> AgentState:
     group_id = state.get("group_id")
     message_text = state.get("message_text", "")
     intent = state.get("intent", "UNKNOWN")
-    
+
     logger.info("Context Node (Agentic) started", extra={
         "node": "context_node",
         "group_id": group_id,
         "intent": intent
     })
-    
+
+    # Personal tasks — no group history, skip all context fetching
+    if state.get("is_personal", False):
+        state["db_context"] = ""
+        state["message_buffer"] = []
+        state["context_retrieval_reasoning"] = "Personal task — skipping group context fetch"
+        logger.info("Context Node completed - personal task", extra={"node": "context_node"})
+        return state
+
     if not group_id:
         state["db_context"] = ""
         state["message_buffer"] = []
         state["context_retrieval_reasoning"] = "No group_id provided"
         logger.info("Context Node completed - no group_id", extra={"node": "context_node"})
         return state
+
     
     # Step 1: Get rolling message buffer
     message_buffer = get_raw_message_window(group_id, limit=20)

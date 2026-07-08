@@ -79,7 +79,7 @@ async def fetch_recent_tasks(group_id: int, limit: int = 10, excluded_task_ids: 
 
 
 async def save_task(task_data: dict) -> int:
-    """Save a single task (one row per group message)."""
+    """Save a single task. Supports both group tasks (group_id set) and personal tasks (user_id set)."""
     start = time.time()
     try:
         deadline = task_data.get('deadline')
@@ -93,14 +93,15 @@ async def save_task(task_data: dict) -> int:
         async with pool.acquire() as conn:
             task_id = await conn.fetchval("""
                 INSERT INTO tasks (
-                    group_id, message_sender_id, title, action_required,
+                    group_id, user_id, message_sender_id, title, action_required,
                     deadline, source_message_text, message_type,
                     applies_at, location, form_url, reminder_strategy, reminder_level
                 )
-                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,0)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,0)
                 RETURNING id
             """,
                 task_data.get('group_id'),
+                task_data.get('user_id'),
                 task_data.get('message_sender_id'),
                 task_data.get('title'),
                 task_data.get('action_required'),
