@@ -32,6 +32,23 @@ def clear_hitl_lock(user_id: int):
     redis_client.delete(key)
 
 
+def set_group_hitl_lock(group_id: int, state_data: dict, ttl_seconds: int = 3600):
+    """One HITL lock per group. First valid reply in the group resolves it."""
+    key = f"awaiting_clarification:group:{group_id}"
+    redis_client.setex(key, ttl_seconds, serialize_state(state_data))
+
+def check_group_hitl_lock(group_id: int) -> dict | None:
+    key = f"awaiting_clarification:group:{group_id}"
+    data = redis_client.get(key)
+    if data:
+        return json.loads(data)
+    return None
+
+def clear_group_hitl_lock(group_id: int):
+    key = f"awaiting_clarification:group:{group_id}"
+    redis_client.delete(key)
+
+
 def is_message_processed(message_id: int, group_id: int) -> bool:
     """
     Check if a message has already been processed (idempotency check).

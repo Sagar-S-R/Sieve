@@ -23,6 +23,7 @@ from api_gateway.services.database import get_user_subscriptions
 from api_gateway.services.redis_client import set_edit_task_state
 import json
 from api_gateway.services.redis_client import get_hitl_lock
+from api_gateway.services.redis_client import check_group_hitl_lock, clear_group_hitl_lock
 
 router = APIRouter()
 
@@ -451,12 +452,38 @@ async def telegram_webhook(request: Request):
         if chat_type in ["group", "supergroup"]:
             group_id = chat.get("id")
             
+            message_id = message.get("message_id")
+
+            # Check if this is a reply to bot's HITL clarification message
+            reply_to = message.get("reply_to_message")
+            if reply_to and reply_to.get("from", {}).get("id") == settings.TELEGRAM_BOT_ID:
+                saved_state = check_group_hitl_lock(group_id)
+
+                if saved_state:
+                    bot_message_id = saved_state.get("bot_message_id")
+                    reply_to_message_id = reply_to.get("message_id")
+
+                    if bot_message_id and reply_to_message_id == bot_message_id:
+                        # Valid HITL reply — clear lock immediately (first reply wins)
+                        clear_group_hitl_lock(group_id)
+                        payload = {
+                            "user_id": user_id,
+                            "group_id": group_id,
+                            "message_id": message_id,
+                            "message_text": text,
+                            "is_hitl_response": True,
+                            "is_group_hitl": True,
+                            "saved_state": saved_state
+                        }
+                        await publish_to_queue("fast_text_queue", payload)
+                        return {"status": "ok"}
+
             # Prepare base payload
             payload = {
                 "user_id": user_id,
                 "group_id": group_id,
                 "message_text": text,
-                "message_id": message.get("message_id")  # For deduplication
+                "message_id": message_id
             }
             
             # Check for media (images or documents)

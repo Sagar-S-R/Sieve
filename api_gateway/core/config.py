@@ -3,6 +3,7 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     TELEGRAM_BOT_TOKEN: str
+    TELEGRAM_BOT_ID: int
     RABBITMQ_URL: str
     REDIS_URL: str
     DATABASE_URL: str
