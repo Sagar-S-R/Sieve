@@ -211,28 +211,6 @@ def invalidate_user_subs_cache(user_id: int):
 # ROLLING MESSAGE BUFFER (NEW)
 # ============================================================================
 
-def add_message_to_buffer(group_id: int, message_text: str, max_size: int = 20):
-    """
-    Add a message to the rolling buffer for a group.
-    Maintains last N messages in a Redis list.
-    
-    Args:
-        group_id: The Telegram group ID
-        message_text: The message text to add
-        max_size: Maximum number of messages to keep (default 20)
-    """
-    try:
-        key = f"raw_msgs:{group_id}"
-        # Add to right (most recent)
-        redis_client.rpush(key, message_text)
-        # Trim to keep only last max_size messages
-        redis_client.ltrim(key, -max_size, -1)
-        # Set expiry (2 hours)
-        redis_client.expire(key, 7200)
-    except (redis.ConnectionError, redis.TimeoutError) as e:
-        print(f"[BUFFER ERROR] Redis connection failed when adding message to buffer:{group_id}: {e}")
-
-
 def get_raw_message_window(group_id: int, limit: int = 20) -> list:
     """
     Get the most recent messages from the rolling buffer.

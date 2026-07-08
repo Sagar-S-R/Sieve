@@ -1,17 +1,33 @@
 from fastapi import APIRouter, Request, HTTPException
-from api_gateway.services.redis_client import get_hitl_lock, delete_hitl_lock
-from api_gateway.services.database import save_completed_task
 from api_gateway.services.rabbitmq import publish_to_queue
 from api_gateway.services.telegram import send_telegram_dm
 import hmac
 import re
+from datetime import timezone, timedelta
+import httpx
+from api_gateway.core.llm import call_llm
+from api_gateway.services.database import subscribe_to_group
+from api_gateway.services.database import unsubscribe_from_group
+from datetime import datetime
+from api_gateway.core.config import settings
+from api_gateway.services.redis_client import get_edit_task_state
+from api_gateway.core.config import settings as api_settings
+from api_gateway.services.redis_client import get_edit_task_state, clear_edit_task_state
+from api_gateway.services.redis_client import push_raw_message as redis_push_raw_message
+from api_gateway.services.database import delete_task
+from datetime import datetime, timezone, timedelta
+from api_gateway.services.database import get_user_tasks
+from api_gateway.services.database import get_task_by_id
+from api_gateway.services.database import update_task_deadline
+from api_gateway.services.database import get_user_subscriptions
+from api_gateway.services.redis_client import set_edit_task_state
 import json
+from api_gateway.services.redis_client import get_hitl_lock
 
 router = APIRouter()
 
 async def push_raw_message(group_id: int, message_data: dict):
     """Push raw message to buffer before any triage."""
-    from api_gateway.services.redis_client import push_raw_message as redis_push_raw_message
     await redis_push_raw_message(group_id, message_data)
 
 def verify_telegram_webhook(request: Request, bot_token: str):
@@ -143,7 +159,6 @@ async def telegram_webhook(request: Request):
     """
     try:
         # CRITICAL: Verify Telegram webhook signature
-        from api_gateway.core.config import settings
         verify_telegram_webhook(request, settings.TELEGRAM_BOT_TOKEN)
         
         data = await request.json()
@@ -151,8 +166,6 @@ async def telegram_webhook(request: Request):
         # Handle callback queries (button clicks)
         callback_query = data.get("callback_query")
         if callback_query:
-            from api_gateway.services.database import unsubscribe_from_group
-            import httpx
             
             query_id = callback_query.get("id")
             user_id = callback_query.get("from", {}).get("id")
@@ -202,7 +215,6 @@ async def telegram_webhook(request: Request):
         # ============================================
         new_chat_members = message.get("new_chat_members", [])
         if new_chat_members and chat_type in ["group", "supergroup"]:
-            from api_gateway.services.database import subscribe_to_group
             
             # Check if our bot was added
             bot_username = "sieve7_bot"
@@ -238,8 +250,6 @@ async def telegram_webhook(request: Request):
                     }
                     
                     # Send to group (not DM)
-                    from api_gateway.core.config import settings as api_settings
-                    import httpx
                     
                     send_url = f"https://api.telegram.org/bot{api_settings.TELEGRAM_BOT_TOKEN}/sendMessage"
                     async with httpx.AsyncClient() as client:
@@ -269,7 +279,6 @@ async def telegram_webhook(request: Request):
             if text and text.startswith("/start"):
                 # Check if it's a deep link subscription (e.g., /start sub_-100123456789)
                 if text.startswith("/start sub_"):
-                    from api_gateway.services.database import subscribe_to_group
                     
                     # Extract group ID from deep link
                     group_id_str = text.replace("/start sub_", "").strip()
@@ -338,7 +347,6 @@ async def telegram_webhook(request: Request):
             
             # Handle /unsubscribe command
             if text and text.startswith("/unsubscribe"):
-                from api_gateway.services.database import get_user_subscriptions
                 
                 subscriptions = await get_user_subscriptions(user_id)
                 
@@ -408,7 +416,6 @@ async def telegram_webhook(request: Request):
                 return {"status": "ok"}
             
             # Check if user is in edit mode (replying with new deadline)
-            from api_gateway.services.redis_client import get_edit_task_state
             edit_state = await get_edit_task_state(user_id)
             if edit_state:
                 await handle_edit_reply(user_id, text)
@@ -472,7 +479,6 @@ async def telegram_webhook(request: Request):
             # Pure text message — two-stage triage
             if text:
                 # Step 1: ALWAYS buffer (before triage)
-                from datetime import datetime
                 await push_raw_message(group_id, {
                     "user_id": user_id,
                     "message_text": text,
@@ -519,7 +525,6 @@ def format_deadline(deadline) -> str:
     Returns:
         Formatted string like "May 12, 2026 at 5:30 PM"
     """
-    from datetime import timezone, timedelta
     
     # Convert to IST
     ist_tz = timezone(timedelta(hours=5, minutes=30))
@@ -534,7 +539,6 @@ async def handle_tasks_command(user_id: int):
     """
     Handle /tasks command - show user's tasks.
     """
-    from api_gateway.services.database import get_user_tasks
     
     # Fetch user's tasks
     tasks = await get_user_tasks(user_id)
@@ -575,7 +579,6 @@ async def handle_delete_command(user_id: int, message_text: str):
     """
     Handle /delete <task_id> command.
     """
-    from api_gateway.services.database import delete_task
     
     # Parse command
     parts = message_text.split()
@@ -617,8 +620,6 @@ async def handle_edit_command(user_id: int, message_text: str):
     """
     Handle /edit <task_id> command - start edit flow.
     """
-    from api_gateway.services.database import get_task_by_id
-    from api_gateway.services.redis_client import set_edit_task_state
     
     # Parse command
     parts = message_text.split()
@@ -672,8 +673,6 @@ async def handle_edit_reply(user_id: int, message_text: str):
     """
     Handle user's reply with new deadline during edit flow.
     """
-    from api_gateway.services.redis_client import get_edit_task_state, clear_edit_task_state
-    from api_gateway.services.database import update_task_deadline
     
     # Get edit state
     edit_state = await get_edit_task_state(user_id)
@@ -733,9 +732,6 @@ async def parse_deadline_from_text(text: str):
     Returns:
         UTC datetime object or None if parsing fails
     """
-    from api_gateway.core.llm import call_llm
-    from datetime import datetime, timezone, timedelta
-    import json
     
     # Get current date in IST for context
     ist_tz = timezone(timedelta(hours=5, minutes=30))

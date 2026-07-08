@@ -34,23 +34,6 @@ async def get_hitl_lock(user_id: int) -> Optional[dict]:
     return None
 
 
-async def delete_hitl_lock(user_id: int) -> bool:
-    """
-    Delete HITL lock for user.
-    
-    Args:
-        user_id: Telegram user ID
-        
-    Returns:
-        True if deleted, False otherwise
-    """
-    client = await get_redis_client()
-    key = f"awaiting_clarification:{user_id}"
-    
-    result = await client.delete(key)
-    return result > 0
-
-
 # ============================================================================
 # CACHING FUNCTIONS
 # ============================================================================
@@ -311,50 +294,3 @@ async def get_raw_message_window(group_id: int, limit: int = 20) -> list:
         return []
 
 
-# ============================================================================
-# ROLLING MESSAGE BUFFER (NEW)
-# ============================================================================
-
-async def add_message_to_buffer(group_id: int, message_text: str, max_size: int = 20):
-    """
-    Add a message to the rolling buffer for a group (async).
-    Maintains last N messages in a Redis list.
-    
-    Args:
-        group_id: The Telegram group ID
-        message_text: The message text to add
-        max_size: Maximum number of messages to keep (default 20)
-    """
-    try:
-        client = await get_redis_client()
-        key = f"raw_msgs:{group_id}"
-        # Add to right (most recent)
-        await client.rpush(key, message_text)
-        # Trim to keep only last max_size messages
-        await client.ltrim(key, -max_size, -1)
-        # Set expiry (2 hours)
-        await client.expire(key, 7200)
-    except Exception as e:
-        print(f"[BUFFER ERROR] Failed to add message to buffer:{group_id}: {e}")
-
-
-async def get_message_buffer(group_id: int, limit: int = 20) -> list:
-    """
-    Get the last N messages from the rolling buffer (async).
-    
-    Args:
-        group_id: The Telegram group ID
-        limit: Number of messages to retrieve (default 20)
-        
-    Returns:
-        List of message strings, most recent last. Empty list if none found.
-    """
-    try:
-        client = await get_redis_client()
-        key = f"raw_msgs:{group_id}"
-        # Get last N messages (negative indices get from right/end)
-        messages = await client.lrange(key, -limit, -1)
-        return messages  # Already decoded with decode_responses=True
-    except Exception as e:
-        print(f"[BUFFER ERROR] Failed to get buffer:{group_id}: {e}")
-        return []

@@ -220,34 +220,35 @@ async def update_task_by_id(task_id: int, new_deadline=None, new_location: str =
         db_operation_latency.labels(operation="update_task_by_id").observe(time.time() - start)
 
 
-async def update_tasks_by_title_and_group(group_id: int, title: str, new_deadline) -> int:
-    """Update all tasks matching title in a group."""
-    from workers.text_extractor.services.redis_client import invalidate_recent_tasks_cache
-    from datetime import datetime
-    
-    if isinstance(new_deadline, str):
-        new_deadline = datetime.fromisoformat(new_deadline.replace('Z', '+00:00'))
-    
-    start = time.time()
-    try:
-        async with pool.acquire() as conn:
-            rows = await conn.fetch("""
-                UPDATE tasks
-                SET deadline = $1, updated_at = NOW()
-                WHERE group_id = $2
-                AND LOWER(title) = LOWER($3)
-                AND deadline > NOW() - INTERVAL '7 days'
-                RETURNING id
-            """, new_deadline, group_id, title)
-            count = len(rows)
-            if count > 0:
-                invalidate_recent_tasks_cache(group_id)
-            return count
-    except Exception as e:
-        logger.error(f"[DB] update_tasks_by_title_and_group error: {e}", exc_info=True)
-        return 0
-    finally:
-        db_operation_latency.labels(operation="update_tasks_by_title_and_group").observe(time.time() - start)
+# Kept for group-level task redesign
+# async def update_tasks_by_title_and_group(group_id: int, title: str, new_deadline) -> int:
+#     """Update all tasks matching title in a group."""
+#     from workers.text_extractor.services.redis_client import invalidate_recent_tasks_cache
+#     from datetime import datetime
+#     
+#     if isinstance(new_deadline, str):
+#         new_deadline = datetime.fromisoformat(new_deadline.replace('Z', '+00:00'))
+#     
+#     start = time.time()
+#     try:
+#         async with pool.acquire() as conn:
+#             rows = await conn.fetch("""
+#                 UPDATE tasks
+#                 SET deadline = $1, updated_at = NOW()
+#                 WHERE group_id = $2
+#                 AND LOWER(title) = LOWER($3)
+#                 AND deadline > NOW() - INTERVAL '7 days'
+#                 RETURNING id
+#             """, new_deadline, group_id, title)
+#             count = len(rows)
+#             if count > 0:
+#                 invalidate_recent_tasks_cache(group_id)
+#             return count
+#     except Exception as e:
+#         logger.error(f"[DB] update_tasks_by_title_and_group error: {e}", exc_info=True)
+#         return 0
+#     finally:
+#         db_operation_latency.labels(operation="update_tasks_by_title_and_group").observe(time.time() - start)
 
 
 async def search_tasks_by_title_fuzzy(group_id: int, search_title: str, limit: int = 5, excluded_task_ids: list = []) -> list:
