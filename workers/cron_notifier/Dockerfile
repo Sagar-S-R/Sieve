@@ -7,6 +7,7 @@ COPY workers/cron_notifier/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy cron_notifier code
+COPY shared/ /app/shared/
 COPY workers/cron_notifier/ /app/workers/cron_notifier/
 
 # Set Python path

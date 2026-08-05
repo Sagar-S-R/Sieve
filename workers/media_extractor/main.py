@@ -4,12 +4,12 @@ import json
 import logging
 from workers.media_extractor.core.config import settings
 from workers.media_extractor.services.file_handler import download_telegram_file
-from workers.media_extractor.services.database import (
+from shared.database import (
     init_pool, close_pool, get_group_subscribers, save_tasks_atomic
 )
 from workers.media_extractor.graph.workflow import app
 from workers.media_extractor.graph.state import AgentState
-from workers.text_extractor.services.redis_client import is_message_processed, mark_message_processed
+from shared.redis_client import is_message_processed, mark_message_processed
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

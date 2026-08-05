@@ -1,5 +1,5 @@
-from workers.text_extractor.graph.state import AgentState
-from workers.text_extractor.services.redis_client import set_hitl_lock, set_group_hitl_lock
+﻿from workers.text_extractor.graph.state import AgentState
+from shared.redis_client import set_hitl_lock, set_group_hitl_lock
 from workers.text_extractor.services.telegram_client import send_telegram_message
 from workers.text_extractor.core.logger import logger
 
@@ -39,7 +39,7 @@ async def require_human_in_loop(state: AgentState) -> AgentState:
             "validation_error": state.get("validation_error"),
         }
 
-        set_hitl_lock(user_id, hitl_state)
+        await set_hitl_lock(user_id, hitl_state)
         logger.info(f"[HITL] Personal clarification sent to user {user_id}, bot_message_id={bot_message_id}")
 
     else:
@@ -67,7 +67,7 @@ async def require_human_in_loop(state: AgentState) -> AgentState:
             "validation_error": state.get("validation_error"),
         }
 
-        set_group_hitl_lock(group_id, hitl_state)
+        await set_group_hitl_lock(group_id, hitl_state)
         logger.info(f"[HITL] Group clarification sent to {group_id}, bot_message_id={bot_message_id}")
 
     return state
@@ -91,6 +91,18 @@ def _build_personal_hitl_message(reason: str, extracted, candidate_tasks: list) 
             f"*Reply to THIS message* with exact date/time"
         )
 
+    elif reason == "update_candidates":
+        task_list = "\n".join([
+            f"{i+1}. {t['title']} — {t.get('deadline', 'no deadline')}"
+            for i, t in enumerate(candidate_tasks)
+        ])
+        return (
+            f"🔄 Which task are you updating?\n\n"
+            f"{task_list}\n\n"
+            f"👆 Reply to THIS message with the number\n"
+            f"_(Or describe the task if not listed above)_"
+        )
+
     elif reason == "llm_requested":
         clarification = extracted.needs_clarification if extracted else "please clarify"
         return (
@@ -108,49 +120,49 @@ def _build_personal_hitl_message(reason: str, extracted, candidate_tasks: list) 
 
 
 def _build_group_hitl_message(reason: str, extracted, candidate_tasks: list) -> str:
-    title = extracted.title if extracted else "unknown task"
-
-    if reason == "missing_deadline":
+    if reason == "update_candidates":
+        task_list = "\n".join([
+            f"{i+1}. {t['title']} — {t.get('deadline', 'no deadline')}"
+            for i, t in enumerate(candidate_tasks)
+        ])
         return (
-            f"Task detected: *{title}*\n\n"
-            f"What's the deadline?\n\n"
-            f"*Reply to THIS message* with the date and time\n"
+            f"🔄 Which task are you updating?\n\n"
+            f"{task_list}\n\n"
+            f"👆 Reply to THIS message with the number\n"
+            f"_(Or describe the task if not listed above)_"
+        )
+
+    elif reason == "missing_deadline":
+        title = extracted.title if extracted else "this task"
+        return (
+            f"📋 Task detected: *{title}*\n\n"
+            f"❓ What's the deadline?\n\n"
+            f"👆 Reply to THIS message with the date and time\n"
             f"_(First reply will be used)_"
         )
 
     elif reason == "missing_location":
         return (
-            f"Venue change detected\n\n"
-            f"Which room or building?\n\n"
-            f"*Reply to THIS message* with the location\n"
+            f"📢 Venue change detected\n\n"
+            f"❓ Which room or building?\n\n"
+            f"👆 Reply to THIS message with the location\n"
             f"_(First reply will be used)_"
         )
 
     elif reason == "missing_url":
+        title = extracted.title if extracted else "this form"
         return (
-            f"Form deadline detected: *{title}*\n\n"
-            f"Can you share the form link?\n\n"
-            f"*Reply to THIS message* with the URL\n"
-            f"_(First reply will be used)_"
-        )
-
-    elif reason in ["low_match_confidence", "update_confirmation"]:
-        task_list = "\n".join([
-            f"{i+1}. {t['title']} -- {t.get('deadline', 'no deadline')}"
-            for i, t in enumerate(candidate_tasks)
-        ])
-        return (
-            f"Which task are you updating?\n\n"
-            f"{task_list}\n\n"
-            f"*Reply to THIS message* with the number\n"
+            f"📝 Form deadline detected: *{title}*\n\n"
+            f"❓ Can you share the form link?\n\n"
+            f"👆 Reply to THIS message with the URL\n"
             f"_(First reply will be used)_"
         )
 
     else:
-        clarification = extracted.needs_clarification if extracted else "Please clarify"
+        title = extracted.title if extracted else "this task"
         return (
-            f"Task detected: *{title}*\n\n"
-            f"{clarification}\n\n"
-            f"*Reply to THIS message* with your answer\n"
+            f"📋 Task detected: *{title}*\n\n"
+            f"❓ I need more details to save this correctly\n\n"
+            f"👆 Reply to THIS message to clarify\n"
             f"_(First reply will be used)_"
         )

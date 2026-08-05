@@ -1,8 +1,8 @@
 from workers.media_extractor.graph.state import AgentState
-from workers.media_extractor.services.redis_client import set_hitl_lock
+from shared.redis_client import set_hitl_lock
 
 
-def require_human_in_loop(state: AgentState) -> AgentState:
+async def require_human_in_loop(state: AgentState) -> AgentState:
     """
     Trigger HITL flow when clarification is needed.
     Creates Redis lock and formats prompt for user.
@@ -19,7 +19,7 @@ def require_human_in_loop(state: AgentState) -> AgentState:
         )
         
         # Save current state to Redis lock
-        set_hitl_lock(user_id, state)
+        await set_hitl_lock(user_id, state)
         
         print(f"[HITL] Triggered for user {user_id}. Prompt: {state['hitl_prompt']}")
     

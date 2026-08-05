@@ -6,30 +6,40 @@
 
 ```mermaid
 graph TD
-    TG([Telegram Users]) -->|Webhook| GW[API Gateway<br/>FastAPI]
-    
-    GW -->|Personal DM| RMQ
-    GW -->|Group Message| BUF[Raw Message Buffer<br/>Redis Rolling Window<br/>20 msgs · 2hr TTL]
-    
-    BUF --> TRIAGE[Two-Stage Triage<br/>Stage 1: Drop pure noise<br/>Stage 2: Route everything else]
-    
-    TRIAGE -->|Text messages| RMQ[RabbitMQ<br/>Message Queue]
-    TRIAGE -->|Media messages| RMQ
-    TRIAGE -->|HITL reply| REDIS[Redis<br/>Caching · HITL Locks<br/>Message Buffer]
-    
-    RMQ -->|fast_text_queue| TE[Text Extractor<br/>LangGraph]
-    RMQ -->|heavy_media_queue| ME[Media Extractor<br/>Vision + OCR]
-    
-    REDIS -->|State Management| TE
-    REDIS -->|State Management| ME
-    
-    TE -->|Group/Personal Task| DB[PostgreSQL<br/>Task Storage]
-    ME --> DB
-    
-    DB -->|Poll Deadlines| CRON[Cron Notifier<br/>60s Loop]
-    
-    CRON -->|Send Reminders| DM([Telegram DMs<br/>Reminders])
-    
+    TG([Telegram Group]) -->|Webhook| GW[API Gateway<br/>FastAPI]
+
+    GW --> HITL_CHECK{Group HITL<br/>Lock exists?}
+
+    HITL_CHECK -->|No| BUF[Raw Message Buffer<br/>Redis · 20 msgs · 2hr TTL]
+    HITL_CHECK -->|Yes - missing field reply| MERGE[hitl_merge_node<br/>LLM merges original + reply]
+    HITL_CHECK -->|Yes - UPDATE number pick| UPDATE_DB[update_task_by_id<br/>Direct DB update]
+    HITL_CHECK -->|Yes - UPDATE description| RERETRIEVAL[hitl_reretrieval_node]
+
+    MERGE --> SAVE
+    UPDATE_DB --> END([End])
+    RERETRIEVAL --> HITL
+
+    BUF --> TRIAGE[Two-Stage Triage<br/>Drop noise · Route rest]
+
+    TRIAGE -->|Noise| DROP([Dropped])
+    TRIAGE -->|Text| RMQ_T[fast_text_queue<br/>RabbitMQ]
+
+    RMQ_T --> INTENT[intent_node<br/>NEW · UPDATE · ANNOUNCEMENT · FORM_DEADLINE · CHITCHAT]
+
+    INTENT -->|CHITCHAT| DROP
+    INTENT -->|NEW / UPDATE / ANNOUNCEMENT / FORM_DEADLINE| CONTEXT[context_node<br/>Redis Window + Agentic DB Fetch]
+
+    CONTEXT --> EXTRACT[extractor_node<br/>Intent-aware Gemini prompt]
+    EXTRACT --> CRITIC[critic_node<br/>Validate extraction]
+
+    CRITIC -->|Valid| SAVE[save_task<br/>PostgreSQL]
+    CRITIC -->|Needs clarification or UPDATE candidates| HITL[hitl_node<br/>Send numbered list or question to group]
+
+    HITL --> END([End])
+
+    SAVE --> DB[(PostgreSQL Tasks)]
+    DB -->|Poll every 60s| CRON[Cron Notifier<br/>JOIN group_subscriptions]
+    CRON -->|Send Reminders| DM([Telegram DMs])
     DM -->|User Reply| GW
 ```
 
@@ -41,12 +51,11 @@ graph TD
 - Every message buffered to Redis rolling window (20 msgs, 2hr TTL) before triage decision
 
 ### 2. Multi-Intent Extraction
-Supports 7 message intents, each with different extraction logic:
+Supports 6 message intents, each with different extraction logic:
 - `NEW` — deadlines and tasks
 - `UPDATE` — corrections to existing tasks, with user confirmation before any DB write
 - `ANNOUNCEMENT` — venue changes, class cancellations, schedule shifts
 - `FORM_DEADLINE` — Google Form links with deadlines
-- `QA_PAIR` — questions and answers stored for repeated question detection
 - `CHITCHAT` / `QUERY` — dropped without LLM cost
 
 ### 3. Agentic Context Retrieval
@@ -100,41 +109,6 @@ User replies in same private chat
 - Subscribers resolved at reminder time via JOIN query
 - 60x reduction in database storage for active groups
 
-
-## Text Extractor Agent Flow
-
-```mermaid
-graph TD
-    START([Start]) --> INTENT[intent_node]
-
-    INTENT -->|CHITCHAT / QUERY| END_NODE([End])
-    INTENT -->|QA_PAIR| QA[qa_store_node]
-    INTENT -->|NEW / UPDATE / ANNOUNCEMENT / FORM_DEADLINE| CONTEXT[context_node]
-
-    QA --> END_NODE
-
-    CONTEXT -->|Note: Personal tasks skip DB fetch| EXTRACT[extractor_node]
-    EXTRACT --> CRITIC[critic_node]
-
-    CRITIC -->|needs_human=False| END_NODE
-    CRITIC -->|needs_human=True, any hitl_reason| HITL[hitl_node]
-
-    HITL --> END_NODE
-
-    USER_REPLY([User DM Reply]) --> LOCK_CHECK{Check HITL Lock}
-
-    LOCK_CHECK -->|No lock found| IGNORE([Ignore])
-    LOCK_CHECK -->|hitl_reason=update_confirmation, reply=YES| DB_UPDATE[update_task_by_id]
-    LOCK_CHECK -->|hitl_reason=update_confirmation, reply=NO| RERETRIEVAL[hitl_reretrieval_node]
-    LOCK_CHECK -->|hitl_reason=low_match_confidence, reply=number| CONFIRM_LOOP[hitl_node]
-    LOCK_CHECK -->|hitl_reason=low_match_confidence, reply=description| RERETRIEVAL
-    LOCK_CHECK -->|hitl_reason=missing_field| MERGE[hitl_merge_node]
-
-    RERETRIEVAL --> CRITIC
-    CONFIRM_LOOP --> END_NODE
-    MERGE --> END_NODE
-    DB_UPDATE --> END_NODE
-```
 
 ## Project Structure
 
@@ -307,8 +281,6 @@ PostgreSQL: Task saved with deadline
 ↓
 cron_notifier (when deadline arrives): Send DM to user
 ```
-
-> **Note**: For a deep dive into the LangGraph workflow and state management used by the Text Extractor, see [docs/TEXT_EXTRACTOR.md](docs/TEXT_EXTRACTOR.md).
 
 ### Example 2: Image with Task
 ```

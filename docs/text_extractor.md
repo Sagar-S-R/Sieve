@@ -8,36 +8,43 @@ The agent runs through a state graph to determine exactly how a message should b
 
 ```mermaid
 graph TD
-    START([Start]) --> INTENT[intent_node]
+    TG([Telegram Group]) -->|Webhook| GW[API Gateway<br/>FastAPI]
 
-    INTENT -->|CHITCHAT / QUERY| END_NODE([End])
-    INTENT -->|QA_PAIR| QA[qa_store_node]
-    INTENT -->|NEW / UPDATE / ANNOUNCEMENT / FORM_DEADLINE| CONTEXT[context_node]
+    GW --> HITL_CHECK{Group HITL<br/>Lock exists?}
 
-    QA --> END_NODE
+    HITL_CHECK -->|No| BUF[Raw Message Buffer<br/>Redis · 20 msgs · 2hr TTL]
+    HITL_CHECK -->|Yes - missing field reply| MERGE[hitl_merge_node<br/>LLM merges original + reply]
+    HITL_CHECK -->|Yes - UPDATE number pick| UPDATE_DB[update_task_by_id<br/>Direct DB update]
+    HITL_CHECK -->|Yes - UPDATE description| RERETRIEVAL[hitl_reretrieval_node]
 
-    CONTEXT --> EXTRACT[extractor_node]
-    EXTRACT --> CRITIC[critic_node]
+    MERGE --> SAVE
+    UPDATE_DB --> END([End])
+    RERETRIEVAL --> HITL
 
-    CRITIC -->|needs_human=False| END_NODE
-    CRITIC -->|needs_human=True, any hitl_reason| HITL[hitl_node]
+    BUF --> TRIAGE[Two-Stage Triage<br/>Drop noise · Route rest]
 
-    HITL --> END_NODE
+    TRIAGE -->|Noise| DROP([Dropped])
+    TRIAGE -->|Text| RMQ_T[fast_text_queue<br/>RabbitMQ]
 
-    USER_REPLY([User DM Reply]) --> LOCK_CHECK{Check HITL Lock}
+    RMQ_T --> INTENT[intent_node<br/>NEW · UPDATE · ANNOUNCEMENT · FORM_DEADLINE · CHITCHAT]
 
-    LOCK_CHECK -->|No lock found| IGNORE([Ignore])
-    LOCK_CHECK -->|hitl_reason=update_confirmation, reply=YES| DB_UPDATE[update_task_by_id]
-    LOCK_CHECK -->|hitl_reason=update_confirmation, reply=NO| RERETRIEVAL[hitl_reretrieval_node]
-    LOCK_CHECK -->|hitl_reason=low_match_confidence, reply=number| CONFIRM_LOOP[hitl_node]
-    LOCK_CHECK -->|hitl_reason=low_match_confidence, reply=description| RERETRIEVAL
-    LOCK_CHECK -->|hitl_reason=missing_field| MERGE[hitl_merge_node]
+    INTENT -->|CHITCHAT| DROP
+    INTENT -->|NEW / UPDATE / ANNOUNCEMENT / FORM_DEADLINE| CONTEXT[context_node<br/>Redis Window + Agentic DB Fetch]
 
-    RERETRIEVAL --> CRITIC
-    CONFIRM_LOOP --> END_NODE
-    MERGE --> END_NODE
-    DB_UPDATE --> END_NODE
+    CONTEXT --> EXTRACT[extractor_node<br/>Intent-aware Gemini prompt]
+    EXTRACT --> CRITIC[critic_node<br/>Validate extraction]
+
+    CRITIC -->|Valid| SAVE[save_task<br/>PostgreSQL]
+    CRITIC -->|Needs clarification or UPDATE candidates| HITL[hitl_node<br/>Send numbered list or question to group]
+
+    HITL --> END([End])
+
+    SAVE --> DB[(PostgreSQL Tasks)]
+    DB -->|Poll every 60s| CRON[Cron Notifier<br/>JOIN group_subscriptions]
+    CRON -->|Send Reminders| DM([Telegram DMs])
+    DM -->|User Reply| GW
 ```
+
 
 ## Node Details
 
@@ -51,4 +58,3 @@ graph TD
    - `handle_venue_change`: Extracts and updates just the location of an existing event.
    - `handle_schedule_change`: Extracts and updates the time of an existing event.
    - `handle_announcement`: Processes general info blasts without deadlines.
-   - `store_qa_pair`: Identifies and stores frequently asked questions and answers from the chat.

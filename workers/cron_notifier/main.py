@@ -1,7 +1,7 @@
 import asyncio
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from workers.cron_notifier.jobs.reminder_sweep import sweep_and_notify
-from workers.cron_notifier.services.database import init_pool, close_pool
+from shared.database import init_pool, close_pool
 from workers.cron_notifier.core.logger import logger
 
 

@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta, timezone
-from workers.cron_notifier.services.database import (
+from shared.database import (
     fetch_due_tasks_with_subscribers,
     increment_reminder_level
 )

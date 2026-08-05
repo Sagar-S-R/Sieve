@@ -1,5 +1,5 @@
 from workers.text_extractor.graph.state import AgentState
-from workers.text_extractor.services.redis_client import get_raw_message_window
+from shared.redis_client import get_raw_message_window
 from workers.text_extractor.core.llm import llm
 from workers.text_extractor.core.logger import logger
 import json
@@ -43,7 +43,7 @@ async def fetch_context_agentic(state: AgentState) -> AgentState:
 
     
     # Step 1: Get rolling message buffer
-    message_buffer = get_raw_message_window(group_id, limit=20)
+    message_buffer = await get_raw_message_window(group_id, limit=20)
     state["message_buffer"] = message_buffer
     
     logger.info(f"Retrieved {len(message_buffer)} messages from buffer", extra={"node": "context_node"})
@@ -106,7 +106,7 @@ Respond with ONLY a JSON object:
         
         # Step 3: Execute the decided query
         if query_type == "RECENT_TASKS":
-            from workers.text_extractor.services.database import fetch_recent_tasks
+            from shared.database import fetch_recent_tasks
             
             tasks = await fetch_recent_tasks(group_id, limit=10, excluded_task_ids=excluded)
             
@@ -128,7 +128,7 @@ Respond with ONLY a JSON object:
                 logger.warning("SEARCH_BY_TITLE requested but no title provided", extra={"node": "context_node"})
                 state["db_context"] = "No search title provided."
             else:
-                from workers.text_extractor.services.database import search_tasks_by_title_fuzzy
+                from shared.database import search_tasks_by_title_fuzzy
                 
                 # Fuzzy search for matching tasks (with exclusions)
                 matching_tasks = await search_tasks_by_title_fuzzy(group_id, search_title, limit=5, excluded_task_ids=excluded)

@@ -6,8 +6,9 @@ WORKDIR /app
 COPY api_gateway/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy api_gateway code
+# Copy api_gateway code and shared module
 COPY api_gateway/ /app/api_gateway/
+COPY shared/ /app/shared/
 
 # Set Python path
 ENV PYTHONPATH=/app
