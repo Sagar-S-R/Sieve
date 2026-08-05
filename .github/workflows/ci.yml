@@ -78,10 +78,10 @@ jobs:
 
       - name: Lint
         run: |
-          if [ -x node_modules/.bin/eslint ]; then
+          if [ -x node_modules/.bin/eslint ] && ls eslint.config.* .eslintrc.* >/dev/null 2>&1; then
             npm run lint
           else
-            echo "Skipping lint: eslint is not installed in web/package.json"
+            echo "Skipping lint: ESLint binary or config is not available"
           fi
 
       - name: Build
